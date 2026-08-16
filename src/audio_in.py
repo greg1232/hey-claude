@@ -69,13 +69,27 @@ class Microphone:
         except queue.Empty:
             return None
 
-    def flush(self) -> None:
-        """Throw away any audio waiting in the queue."""
+    def flush(self, keep_seconds: float = 0.0) -> list[np.ndarray]:
+        """Throw away audio waiting in the queue.
+
+        `keep_seconds` holds back the most recent audio instead of dropping
+        it, and returns it oldest-first. That matters right after the wake
+        word: someone who runs straight into their question — "hey claude
+        what's the weather" — has already started talking by the time
+        recording begins, and without this their first word is gone.
+        """
+        waiting: list[np.ndarray] = []
         while True:
             try:
-                self._queue.get_nowait()
+                waiting.append(self._queue.get_nowait())
             except queue.Empty:
-                return
+                break
+
+        if keep_seconds <= 0:
+            return []
+        chunk_seconds = config.BLOCK_SIZE / config.SAMPLE_RATE
+        keep = int(keep_seconds / chunk_seconds)
+        return waiting[-keep:] if keep else []
 
     def measure_noise_floor(self, seconds: float = 0.6) -> float:
         """Listen to the quiet room for a moment to learn how loud "silence" is.
@@ -105,8 +119,9 @@ class Microphone:
         Recording always lasts at least MIN_RECORD_SECONDS, stops after
         SILENCE_SECONDS of quiet, and gives up at MAX_RECORD_SECONDS.
         """
-        self.flush()
-        chunks: list[np.ndarray] = []
+        # Keep the tail of what's already queued, so a question that starts
+        # the instant the wake word ends doesn't lose its first word.
+        chunks: list[np.ndarray] = self.flush(config.PRE_ROLL_SECONDS)
         chunk_seconds = config.BLOCK_SIZE / config.SAMPLE_RATE
         quiet_seconds = 0.0
         started = time.monotonic()

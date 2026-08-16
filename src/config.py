@@ -62,6 +62,11 @@ BLOCK_SIZE = 1280
 
 # Stop recording after this much silence (seconds).
 SILENCE_SECONDS = float(_get("SILENCE_SECONDS", "1.0"))
+
+# How much audio from just before recording starts to keep, so running
+# straight from the wake word into the question doesn't lose the first word.
+# Raise it if the start of questions still gets clipped.
+PRE_ROLL_SECONDS = float(_get("PRE_ROLL_SECONDS", "0.5"))
 # Always record at least this long, so a slow start doesn't cut you off.
 MIN_RECORD_SECONDS = float(_get("MIN_RECORD_SECONDS", "0.7"))
 # Give up after this long even if you're still talking.
