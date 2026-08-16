@@ -19,12 +19,14 @@ import config
 import stt
 import tts
 import wake
+import weather
 
 
 def run_voice_mode() -> None:
     """The real thing: talk to it, it talks back."""
     print("Starting up...")
     the_brain = brain.Brain()
+    weather.start()  # Fetches in the background; never blocks a question.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     waker = wake.make_waker()
 

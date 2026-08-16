@@ -21,3 +21,7 @@ faster-whisper>=1.0.0
 # Wake word detection (runs locally). Optional — without it the speaker
 # falls back to push-to-talk, which works fine.
 openwakeword>=0.6.0
+
+# Today's weather, from Open-Meteo — free, no API key. Only used when
+# LOCATION is set in .env.
+requests>=2.31.0

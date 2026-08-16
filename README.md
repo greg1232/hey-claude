@@ -81,11 +81,31 @@ python src/wake.py           # 5. wake up three times, then stop
 | `src/stt.py` | Turns the recording into words (Whisper, runs locally) |
 | `src/brain.py` | Asks Claude and gets the answer |
 | `src/tts.py` | Says the answer out loud (macOS `say`) |
+| `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
 | `train/test_silence.py` | Checks a wake word doesn't fire in a quiet room |
 
-Only `brain.py` uses the internet. The microphone, the wake word, and the
-speech recognition all run on the laptop.
+Only `brain.py` and `weather.py` use the internet. The microphone, the wake
+word, and the speech recognition all run on the laptop.
+
+## Weather
+
+Set your town in `.env` and it can answer weather questions:
+
+```
+LOCATION=Palo Alto, California
+```
+
+That's all — the forecast comes from [Open-Meteo](https://open-meteo.com),
+which is free and needs no account or API key. Leave `LOCATION` out and the
+speaker simply doesn't know the weather; nothing is sent anywhere.
+
+It's fetched in the background and cached for fifteen minutes, so asking
+never waits on the network. If the connection is down, it says it doesn't
+know rather than hanging.
+
+The point isn't reciting a forecast — it's questions like *"should I wear a
+coat?"*, which it can now actually answer.
 
 ## About the wake word
 

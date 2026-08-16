@@ -4,13 +4,13 @@ This is the only part that talks to the internet. Everything else (the
 microphone, the speech recognition, the voice) runs on the laptop.
 """
 
-import platform
 from datetime import datetime
 from pathlib import Path
 
 import anthropic
 
 import config
+import weather
 
 # This tells Claude it's a speaker, not a chat window. It matters a lot:
 # without it Claude writes bullet lists and headings, which sound terrible
@@ -82,6 +82,9 @@ def _now_block() -> str:
     ]
     if config.LOCATION:
         lines.append(f"- The speaker is in {config.LOCATION}.")
+    today = weather.summary()
+    if today:
+        lines.append(f"- Weather: {today}")
     if config.HOUSEHOLD:
         lines.append(f"- You're talking with {config.HOUSEHOLD}.")
     lines.append(
@@ -98,7 +101,8 @@ def _now_block() -> str:
 LIMITS = """What this speaker can and can't do:
 - You can only listen and talk. You have no timers, alarms, music, \
 shopping, smart-home controls, phone calls, messages, calendar, or internet \
-search.
+search. Today's weather is the one live thing you're given, and only when \
+it appears below.
 - If you're asked for one of those, say plainly that you can't do it yet, in \
 one short sentence. Never say you've set, started, played, or ordered \
 anything — nothing happens when you say that.
@@ -118,6 +122,7 @@ def _system_prompt() -> str:
         "answer."
     )
     return f"{SYSTEM_PROMPT}\n\n{LIMITS}\n\n{name}\n\n{_now_block()}"
+
 
 # What to say when something goes wrong. Spoken out loud, so keep it short.
 TROUBLE_MESSAGE = "Sorry, I had trouble thinking about that. Try again?"
