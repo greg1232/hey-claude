@@ -1,0 +1,23 @@
+# Claude Speaker — dependencies
+#
+# Install with:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# Talking to Claude
+anthropic>=0.40.0
+
+# Reading the API key out of .env
+python-dotenv>=1.0.0
+
+# Microphone input
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# Speech to text (runs locally, no internet needed after the first download)
+faster-whisper>=1.0.0
+
+# Wake word detection (runs locally). Optional — without it the speaker
+# falls back to push-to-talk, which works fine.
+openwakeword>=0.6.0
