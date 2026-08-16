@@ -8,21 +8,25 @@ uploading anything.
 You will not have to say "Hey Claude" into a microphone even once — the
 training generates its own voices.
 
-**Budget: about 1 GB downloaded, about an hour.** Measured on an M2 Air.
+**Budget: about 5 GB downloaded, about 80 minutes.** Measured on an M2 Air.
 
 ```bash
 pip install -r train/requirements-train.txt                 # once
-python train/fetch_data.py --budget-gb 1                    # ~5 min
+python train/fetch_data.py --budget-gb 5                    # ~15 min
 python train/generate_clips.py --phrase "hey claude" \
        --out train/hey_claude --count 2000 --count-test 400 \
        --count-negative 6000 --count-negative-test 1200 \
        --adversarial 60 --verify --workers 6                # ~50 min
 python train/train_local.py --training_config train/hey_claude.yml \
        --augment_clips --train_model                        # ~10 min
+python train/test_silence.py train/hey_claude.onnx --seconds 180  # ~3 min
 cp train/hey_claude.onnx models/                            # install it
 ```
 
 Then set `WAKE_MODEL=hey_claude.onnx` in `.env`.
+
+**Do not skip the silence test.** It is the one that catches the failure that
+matters most, and the clip scores give no hint of it — see step 3.
 
 Nearly all of that hour is making clips, not training — training itself is
 **about 8 minutes** for openWakeWord's full 50,000 steps, because the only
@@ -133,41 +137,48 @@ eleven voices and negatives from three, the model can separate them by voice
 instead of by the phrase — and it will score beautifully on your own test
 data while failing on a real person.
 
-## Step 3 — get the background data (about 1 GB)
+## Step 3 — get the background data (about 5 GB)
 
 ```bash
-python train/fetch_data.py --budget-gb 1
+python train/fetch_data.py --budget-gb 5
 ```
 
 That one command gathers everything, staying inside the budget:
 
 | What | Size | Where it comes from |
 |---|---|---|
-| Negative features | ~785 MB | A **slice** of a 17.3 GB file (see below) |
+| Negative features | ~4.8 GB | A **slice** of a 17.3 GB file (see below) |
 | Validation features | 177 MB | Downloaded whole — measures false alarms |
 | 270 room recordings | 8.5 MB | Real MIT impulse responses |
-| 30 background noise clips | 9.3 MB | Generated here, not downloaded |
+| 45 background noise clips | ~14 MB | Generated here, not downloaded |
 
-**How the 17.3 GB becomes 785 MB.** The negative-features file is what
+**How the 17.3 GB becomes 4.8 GB.** The negative-features file is what
 teaches the model to stay quiet during ordinary life, and it's normally a
 17.3 GB download. But it's a plain `.npy` — 5,625,000 windows of `float16`
 — and the server supports range requests. So `fetch_data.py` downloads only
 the first slice and rewrites the file header to say how many windows it
 actually took. The result is a smaller but completely valid file:
-**262,626 windows, 4.7% of the original.**
+**1,564,709 windows, 27.8% of the original.**
 
-Want a better model later? Raise the budget and re-run:
+### Why not 1 GB?
 
-```bash
-python train/fetch_data.py --budget-gb 5
-```
+The first version of this used `--budget-gb 1` — a 4.7% slice — and the
+model that came out **woke on an empty room about 4,000 times an hour**,
+scoring up to 0.99 with nobody speaking.
 
-Only the slice grows; the other files are skipped if already there.
+The cause: every clip it trained on contained audible sound, so near-silence
+was outside its experience and its output there was arbitrary. Two fixes were
+needed, and only one of them is free:
 
-**The honest trade-off:** less negative data means the model has seen less
-of the world, so it's more likely to wake up on something that isn't you.
-`WAKE_THRESHOLD` (step 6) is the dial for that, and a bigger budget is the
-real fix if it bothers you.
+| Fix | Result |
+|---|---|
+| Quiet-room clips among the negatives (`--silence-fraction`) | 4,000 → 90 false wakes/hour |
+| **27.8% negative slice instead of 4.7%** | **90 → 0** |
+
+Synthetic hiss, hum and transients get most of the way; real-world audio is
+what finishes the job. If you must stay near 1 GB, expect to tune
+`WAKE_THRESHOLD` and to live with occasional self-waking — and test it with
+`train/test_silence.py` before believing otherwise.
 
 ## Step 4 — train (about 10 minutes)
 
@@ -283,30 +294,34 @@ phrase, scored in 1280-sample chunks.
 
 Where the current model stands:
 
+**An empty room, 180 s on the real microphone: worst score 0.0011, zero
+false wakes.** That is the test that matters most here (step 6).
+
 | Phrase | Peak score | |
 |---|---|---|
-| **"hey claude"** | **0.997** on 3 of 5 voices | wakes |
-| "hey clyde" | 0.484 | quiet — the closest call |
-| "hey cloud" | 0.001 | quiet |
-| "hey claire" | 0.001 | quiet |
-| "hey jarvis" | 0.001 | quiet |
-| "what is the weather today" | 0.004 | quiet |
-| "can you play some music please" | 0.001 | quiet |
-| "let us go outside and play" | 0.002 | quiet |
-| "he clawed at the door" | 0.676 | homophone — not fixable |
+| **"hey claude"** | **0.995** on 2 of 5 voices | wakes |
+| "hey cloud" | 0.004 | quiet |
+| "hey claire" | 0.000 | quiet |
+| "hey jarvis" | 0.002 | quiet |
+| "what is the weather today" | 0.000 | quiet |
+| "can you play some music please" | 0.000 | quiet |
+| "let us go outside and play" | 0.001 | quiet |
+| "he clawed at the door" | 0.011 | quiet (homophone — got lucky) |
+| "hey clyde" | 0.991 | **false wake** |
 
-Held-back clips it never trained on: **90% of positives** wake it, **7% of
+Held-back clips it never trained on: **90% of positives** wake it, **3% of
 negatives** falsely do.
 
 For reference, the stock `hey_jarvis` model scored with the identical
 harness gets 0.999 with a +0.969 margin. That's the bar, and this isn't
 there yet.
 
-**Waking reliably and staying quiet pull against each other.** An earlier
-model reached 98% held-out recall and woke on 4 of 5 voices — but scored
-0.998 on "hey clyde", which *no* threshold separates from the real phrase.
-The one shipped here gives up some recall for a margin you can tune. If it
-won't wake for you, lower `WAKE_THRESHOLD` before adding data.
+**Waking reliably and staying quiet pull against each other, and the
+run-to-run variance is large.** Models from the same recipe have landed
+anywhere between "wakes on 4 of 5 voices but fires on hey clyde" and "silent
+on everything but strict about the phrase". Train more than once and compare
+before believing any single run. The one shipped here is strict: say the
+phrase clearly, and lower `WAKE_THRESHOLD` to 0.3 before adding data.
 
 **Two honest caveats.** It has been used successfully with a real human
 voice, but every number above comes from synthesized speech. And the

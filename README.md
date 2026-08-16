@@ -82,6 +82,7 @@ python src/wake.py           # 5. wake up three times, then stop
 | `src/brain.py` | Asks Claude and gets the answer |
 | `src/tts.py` | Says the answer out loud (macOS `say`) |
 | `src/config.py` | Every setting, in one place |
+| `train/test_silence.py` | Checks a wake word doesn't fire in a quiet room |
 
 Only `brain.py` uses the internet. The microphone, the wake word, and the
 speech recognition all run on the laptop.
@@ -96,15 +97,20 @@ A trained one ships in `models/hey_claude.onnx` — set `WAKE_MODEL=hey_claude.o
 in `.env` to use it. It's also on the Hub as
 [gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude).
 
-It wakes on "hey claude" at 0.997 and stays under 0.005 on ordinary speech.
-Two things to know: it doesn't suit every voice equally (three of five test
-voices wake it strongly), and "hey clyde" reaches 0.484 — under the 0.5
-threshold, but the closest call by far. `hey_jarvis` is still the default
-until it's been lived with for a while.
+It stays silent in an empty room — 180 seconds on a real microphone, worst
+score 0.001 — and ignores ordinary speech. Two things to know: it's strict,
+so say the phrase clearly (try `WAKE_THRESHOLD=0.3` if it misses you), and it
+false-wakes on **"hey clyde"**.
+
+Check it on your own microphone before trusting it:
+
+```bash
+python train/test_silence.py models/hey_claude.onnx --seconds 180
+```
 
 **To train your own: see [docs/training-hey-claude.md](docs/training-hey-claude.md).**
-It runs entirely on this laptop — no Colab, no GPU — in about **1 GB of
-downloads and an hour**, and you never have to say the phrase into a
+It runs entirely on this laptop — no Colab, no GPU — in about **5 GB of
+downloads and 80 minutes**, and you never have to say the phrase into a
 microphone yourself.
 
 Other options, both in `.env`:
@@ -121,7 +127,11 @@ Almost always the wrong microphone. Run `python src/audio_in.py --devices`
 and set `INPUT_DEVICE` in `.env`.
 
 **It wakes up when nobody said anything.**
-Raise the confidence needed: `WAKE_THRESHOLD=0.7` in `.env`.
+Measure it first — `python train/test_silence.py models/hey_claude.onnx
+--seconds 180`. If that fails, the model never learned what a quiet room is
+and needs retraining with more negative data; raising `WAKE_THRESHOLD` only
+hides it. If it passes, something in the room is setting it off, and 0.7 is
+a reasonable dial.
 
 **It never wakes up.**
 Lower it: `WAKE_THRESHOLD=0.3`. Or use `WAKE_MODE=key` while you sort it out.

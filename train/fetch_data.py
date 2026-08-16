@@ -180,7 +180,18 @@ def make_background_clips(count: int, seconds: int) -> None:
             spectrum /= freqs ** (0.5 if colour == 1 else 1.0)
             audio = np.fft.irfft(spectrum, n)
 
-        audio = audio / (np.abs(audio).max() + 1e-9) * rng.uniform(2000, 12000)
+        # Cover quiet rooms as well as loud ones. An earlier version used
+        # 2000-12000 throughout, which is a busy room — so every clip the
+        # model trained on had audible background, and it had no idea what
+        # near-silence was. It woke on an empty room thousands of times an
+        # hour. A real quiet room is more like 1-50 RMS.
+        if i % 3 == 0:
+            level = rng.uniform(1, 60)        # quiet room
+        elif i % 3 == 1:
+            level = rng.uniform(60, 2000)     # normal room
+        else:
+            level = rng.uniform(2000, 12000)  # busy room
+        audio = audio / (np.abs(audio).max() + 1e-9) * level
         with wave.open(str(out / f"noise{i:03d}.wav"), "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)

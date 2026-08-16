@@ -125,6 +125,72 @@ def weight_negatives(curated: list[str], adversarial: list[str]) -> list[str]:
     return pool
 
 
+def write_silence_clips(out_dir: Path, count: int, seed: int) -> None:
+    """Add near-silent clips to the negatives.
+
+    Without these the model never hears a quiet room. Every generated clip
+    is speech, the downloaded negative features are audio, and the synthetic
+    background noise is loud — so silence falls outside everything the model
+    has seen, and what it does there is anyone's guess. In practice it
+    guessed "wake": a model trained without these scored 0.99 on an empty
+    room and fired thousands of times an hour.
+
+    Real microphone silence isn't digital zero. A MacBook in a quiet room
+    sits around 1-50 RMS: preamp hiss, mains hum, fans, distant traffic.
+    That whole range needs covering, including true zero.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    length = int(TARGET_RATE * 1.5)
+
+    def rumble(level: float) -> np.ndarray:
+        """Low-frequency noise: fans, traffic, air conditioning."""
+        spec = np.fft.rfft(rng.normal(0, 1, length))
+        freqs = np.fft.rfftfreq(length, 1 / TARGET_RATE)
+        freqs[0] = freqs[1]
+        audio = np.fft.irfft(spec / freqs, length)
+        peak = np.abs(audio).max()
+        return audio / peak * level if peak > 0 else audio
+
+    for i in range(count):
+        kind = i % 6
+        if kind == 0:
+            audio = np.zeros(length)                                # digital zero
+        elif kind == 1:
+            audio = rng.normal(0, rng.uniform(0.5, 8), length)      # preamp hiss
+        elif kind == 2:
+            # Mains hum plus its harmonics, which is what a lot of rooms
+            # actually have underneath everything else.
+            t = np.arange(length) / TARGET_RATE
+            audio = sum(rng.uniform(1, 6) / h * np.sin(2 * np.pi * 60 * h * t)
+                        for h in (1, 2, 3)) + rng.normal(0, 1, length)
+        elif kind == 3:
+            audio = rumble(rng.uniform(5, 50))
+        else:
+            # Transients — a knock, a click, a chair creak, keys, a footstep.
+            # These are what a "quiet" room actually produces, and they were
+            # the last thing left waking the model once steady noise was
+            # covered: a room averaging 11 RMS still peaked over 500.
+            audio = rumble(rng.uniform(1, 20))
+            for _ in range(rng.integers(1, 5)):
+                start = int(rng.uniform(0, length - TARGET_RATE // 8))
+                span = int(rng.uniform(0.005, 0.12) * TARGET_RATE)
+                # A sharp attack decaying away, which is what most small
+                # physical sounds look like.
+                decay = np.exp(-np.linspace(0, rng.uniform(3, 30), span))
+                burst = rng.normal(0, 1, span) * decay
+                if rng.random() < 0.5:  # some are tonal, like a tap on wood
+                    tone = np.sin(2 * np.pi * rng.uniform(80, 3000)
+                                  * np.arange(span) / TARGET_RATE)
+                    burst = (burst + tone * decay) / 2
+                peak = np.abs(burst).max()
+                if peak > 0:
+                    audio[start:start + span] += (burst / peak
+                                                  * rng.uniform(50, 2500))
+
+        write_wav(out_dir / f"silence{i:05d}.wav", np.clip(audio, -32768, 32767))
+
+
 def phonemes(text: str) -> list[str] | None:
     """The sounds in `text`, or None if a word isn't in the dictionary."""
     import pronouncing
@@ -406,6 +472,14 @@ def main() -> None:
         help="add this many auto-generated phonetic near-misses to the "
              "negatives, on top of the hand-written list",
     )
+    parser.add_argument(
+        "--silence-fraction",
+        type=float,
+        default=0.12,
+        help="proportion of the negatives that should be a quiet room "
+             "rather than speech. Without these the model wakes on silence "
+             "(default: 0.12)",
+    )
     parser.add_argument("--voices", nargs="+", default=DEFAULT_VOICES,
                         help="Piper voices to use")
     parser.add_argument(
@@ -471,10 +545,19 @@ def main() -> None:
              out_dir=out / "positive_train", verify_model=verify, **common)
     generate(texts=[args.phrase], count=args.count_test, seed=args.seed + 1000,
              out_dir=out / "positive_test", verify_model=verify, **common)
-    generate(texts=negatives, count=n_count, seed=args.seed + 2000,
+    # Reserve part of the negative budget for silence rather than speech.
+    n_quiet = int(n_count * args.silence_fraction)
+    n_quiet_test = int(n_test * args.silence_fraction)
+    generate(texts=negatives, count=n_count - n_quiet, seed=args.seed + 2000,
              out_dir=out / "negative_train", **common)
-    generate(texts=negatives, count=n_test, seed=args.seed + 3000,
+    generate(texts=negatives, count=n_test - n_quiet_test, seed=args.seed + 3000,
              out_dir=out / "negative_test", **common)
+
+    if n_quiet:
+        print(f"  negative_train: adding {n_quiet} quiet-room clips...")
+        write_silence_clips(out / "negative_train", n_quiet, args.seed + 4000)
+        print(f"  negative_test:  adding {n_quiet_test} quiet-room clips...")
+        write_silence_clips(out / "negative_test", n_quiet_test, args.seed + 5000)
 
     total = sum(len(list((out / d).glob("*.wav"))) for d in
                 ["positive_train", "positive_test", "negative_train", "negative_test"])
