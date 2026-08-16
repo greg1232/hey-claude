@@ -285,26 +285,34 @@ Where the current model stands:
 
 | Phrase | Peak score | |
 |---|---|---|
-| **"hey claude"** | **0.999** on 4 of 5 voices | wakes |
-| "hey cloud" | 0.221 | quiet |
+| **"hey claude"** | **0.997** on 3 of 5 voices | wakes |
+| "hey clyde" | 0.484 | quiet — the closest call |
+| "hey cloud" | 0.001 | quiet |
+| "hey claire" | 0.001 | quiet |
 | "hey jarvis" | 0.001 | quiet |
-| "what is the weather today" | 0.000 | quiet |
-| "can you play some music please" | 0.000 | quiet |
-| "hey clyde" | 0.998 | **false wake** |
-| "he clawed at the door" | 0.996 | homophone — not fixable |
+| "what is the weather today" | 0.004 | quiet |
+| "can you play some music please" | 0.001 | quiet |
+| "let us go outside and play" | 0.002 | quiet |
+| "he clawed at the door" | 0.676 | homophone — not fixable |
 
-Held-back clips it never trained on: **98% of positives** wake it, **12% of
+Held-back clips it never trained on: **90% of positives** wake it, **7% of
 negatives** falsely do.
 
 For reference, the stock `hey_jarvis` model scored with the identical
 harness gets 0.999 with a +0.969 margin. That's the bar, and this isn't
 there yet.
 
-**Two honest caveats.** Every number above comes from synthesized speech —
-whether it wakes for an actual child in an actual room is untested, and
-that's the only test that counts. And the false-alarm rate was measured on
-clean clips, not on a TV playing in the background; the 4.7% negative-data
-slice is the likeliest cause if it misfires in a real room.
+**Waking reliably and staying quiet pull against each other.** An earlier
+model reached 98% held-out recall and woke on 4 of 5 voices — but scored
+0.998 on "hey clyde", which *no* threshold separates from the real phrase.
+The one shipped here gives up some recall for a margin you can tune. If it
+won't wake for you, lower `WAKE_THRESHOLD` before adding data.
+
+**Two honest caveats.** It has been used successfully with a real human
+voice, but every number above comes from synthesized speech. And the
+false-alarm rate was measured on clean clips, not on a TV playing in the
+background; the 4.7% negative-data slice is the likeliest cause if it
+misfires in a real room.
 
 ### A measurement mistake worth avoiding
 

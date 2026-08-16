@@ -93,9 +93,14 @@ only ships a handful of pre-trained wake words, and "Hey Claude" isn't one
 of them. Until you train it, the speaker listens for **"hey jarvis"**.
 
 A trained one ships in `models/hey_claude.onnx` — set `WAKE_MODEL=hey_claude.onnx`
-in `.env` to use it. It wakes on "hey claude" at 0.999 across most test
-voices and ignores ordinary speech, but it still false-wakes on "hey clyde",
-so it hasn't replaced `hey_jarvis` as the default yet.
+in `.env` to use it. It's also on the Hub as
+[gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude).
+
+It wakes on "hey claude" at 0.997 and stays under 0.005 on ordinary speech.
+Two things to know: it doesn't suit every voice equally (three of five test
+voices wake it strongly), and "hey clyde" reaches 0.484 — under the 0.5
+threshold, but the closest call by far. `hey_jarvis` is still the default
+until it's been lived with for a while.
 
 **To train your own: see [docs/training-hey-claude.md](docs/training-hey-claude.md).**
 It runs entirely on this laptop — no Colab, no GPU — in about **1 GB of
