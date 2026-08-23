@@ -80,10 +80,11 @@ python src/wake.py           # 5. wake up three times, then stop
 | `src/audio_in.py` | Microphone — records until you stop talking |
 | `src/stt.py` | Turns the recording into words (Whisper, runs locally) |
 | `src/brain.py` | Asks Claude and gets the answer |
-| `src/tts.py` | Says the answer out loud (macOS `say`) |
+| `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
 | `train/test_silence.py` | Checks a wake word doesn't fire in a quiet room |
+| `deploy.sh` | Puts the whole thing on a Raspberry Pi |
 
 Only `brain.py` and `weather.py` use the internet. The microphone, the wake
 word, and the speech recognition all run on the laptop.
@@ -140,6 +141,99 @@ WAKE_MODEL=alexa      # built-in choices: hey_jarvis, alexa, hey_mycroft
 WAKE_MODE=key         # skip the wake word — press Enter to talk instead
 ```
 
+## Putting it on a Raspberry Pi
+
+A laptop is a fine place to build this, but a speaker belongs on a shelf.
+
+```bash
+./deploy.sh normal@192.168.4.95    # the first time — it remembers the address
+./deploy.sh                        # every time after that
+./deploy.sh --service              # ...and start it on every boot
+```
+
+It copies the code, installs what the Pi needs, sends your API key over the
+SSH connection into a file only you can read, and downloads the voice. Run
+it as often as you like — it only redoes what changed. The first run takes
+a few minutes; later ones take seconds.
+
+Two settings are rewritten on the way over, because the Pi isn't a Mac:
+
+| | on the laptop | on the Pi |
+|---|---|---|
+| Voice | macOS `say` | Piper, `en_GB-alan-medium` |
+| Speech recognition | `base.en` | `tiny.en` — a Pi 4 is slower |
+
+Everything else — your key, your town, the wake word — carries over as is.
+To write the Pi's settings by hand instead, make a `.env.pi` file and that
+gets sent untouched.
+
+### The microphone array
+
+The Pi in this project uses a **reSpeaker XVF3800 4-Mic Array**, which suits
+it well: it captures at 16 kHz, which is exactly the rate the wake word and
+Whisper both want, so nothing is resampled on the way in. It also does
+beamforming and echo cancellation on its own chip.
+
+It's a speaker as well as a microphone. If your speakers are wired into the
+array rather than the Pi's headphone socket, use it for both:
+
+```
+INPUT_DEVICE=
+OUTPUT_DEVICE=Array
+```
+
+That's worth doing — the array cancels its own output in hardware, so it
+genuinely doesn't hear Claude talking.
+
+It also arrives **turned down about 20 dB** — `PCM Playback Volume` set to
+37 of 60, on a scale where 60 is 0 dB. That's quiet enough to read as a
+broken speaker rather than a quiet one, and no amount of software gain
+fixes it, because Piper already peaks at full scale. So the speaker sets
+its own volume at every startup:
+
+```
+OUTPUT_VOLUME=100
+```
+
+It happens at startup rather than at install time because mixer levels
+don't reliably survive a reboot. Turn it down if it's too much at night, or
+leave it blank to not touch the system mixer at all. The catch is that it only accepts
+16 kHz, and Piper's voices come out at 22.05 kHz, so `tts.py` resamples on
+the way out. Two things follow from it being one piece of hardware: only
+one stream can be open at a time, which is why `tts.py` closes the device
+after every sound rather than leaving a player running.
+
+### The voice on the Pi
+
+macOS has `say` built in; Linux has nothing, so the Pi speaks with
+[Piper](https://rhasspy.github.io/piper-samples/) — a small neural voice
+that runs locally, like everything else here.
+
+Measured on this Pi 4, synthesising a two-sentence answer:
+
+| voice | compute per second of speech |
+|---|---|
+| `en_GB-alan-medium` | 0.31x — three times faster than real time |
+| `en_US-ryan-medium` | 0.32x |
+| `en_US-ryan-high` | 2.0x — slower than talking, so don't |
+
+Stick to a **medium** voice. Loading one takes about five seconds, so it's
+loaded once at startup and kept, not reloaded per answer.
+
+The bigger expressive models — Chatterbox and its kind — can't go here at
+all: over 3 GB of weights against the Pi's 3.8 GB of memory, before Python
+has even started, and minutes per sentence on four Arm cores.
+
+Pick a different one with `PIPER_VOICE` in `.env`, and choose which socket
+the sound comes out of with `OUTPUT_DEVICE`:
+
+```bash
+python src/tts.py --devices     # lists the speakers it can see
+```
+
+That last one matters on a Pi: ALSA lists the HDMI outputs first, so the
+default is often a monitor rather than your actual speakers.
+
 ## When something goes wrong
 
 **It doesn't hear me / recording is silent.**
@@ -159,9 +253,49 @@ Lower it: `WAKE_THRESHOLD=0.3`. Or use `WAKE_MODE=key` while you sort it out.
 **It cuts me off mid-sentence.**
 Give yourself more silence before it stops: `SILENCE_SECONDS=1.5`.
 
+**It's too quiet, even with everything turned up.**
+Check what the device itself is set to:
+
+```bash
+ssh you@your-pi 'amixer -c 3 contents | grep -A3 "Playback Volume"'
+```
+
+USB audio often ships attenuated. `OUTPUT_VOLUME` in `.env` handles this on
+every startup; if you've set it blank, this is why it's quiet.
+
 **It talks too fast, or the voice is annoying.**
-`SPEECH_RATE=150` to slow down. `say -v '?'` lists every voice; set `VOICE=`
-to any of them.
+`SPEECH_RATE=150` to slow down. On a Mac, `say -v '?'` lists every voice;
+set `VOICE=`. On the Pi, set `PIPER_VOICE=` — the choices are at
+[rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/).
+
+**The Pi is silent, or talks out of the wrong socket.**
+`python src/tts.py --devices` lists what it can see, then set
+`OUTPUT_DEVICE=Headphones` (or whichever) in `.env`. ALSA puts the HDMI
+outputs first, so the default is often a monitor with no speakers.
+
+**The Pi can't hear anything.**
+Check the hardware before blaming the code:
+
+```bash
+ssh you@your-pi arecord -l
+```
+
+No capture devices means nothing is reaching the Pi at all — a USB mic
+should appear in `lsusb`, and an I2S mic HAT needs a `dtoverlay=` line in
+`/boot/firmware/config.txt` before it shows up.
+
+If the microphone *is* listed, try recording from it directly:
+
+```bash
+ssh you@your-pi 'arecord -D plughw:3,0 -f S16_LE -r 16000 -c 2 -d 3 /tmp/c.wav; ls -l /tmp/c.wav'
+```
+
+Three seconds should be about 192 KB. **44 bytes and `read error:
+Input/output error` means the device enumerates but won't stream** — which
+on a Pi 4 is often just the socket. Moving the array from a black USB 2
+port to a blue USB 3 one fixed it here, with no other change. Worth trying
+before anything else, because every symptom above it looks like a software
+fault and isn't.
 
 **"No API key found."**
 You skipped step 2 — `cp .env.example .env` and paste your key in.
@@ -174,4 +308,3 @@ Not built yet, in rough order of fun:
 - Weather, timers, web search
 - Remember conversations between runs
 - A light that shows when it's listening
-- Move it onto a Raspberry Pi so it's a real box on a shelf

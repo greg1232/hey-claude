@@ -2,8 +2,9 @@
 #
 # Start the Claude Speaker.
 #
-#   ./start.sh           say the wake word, then ask your question
-#   ./start.sh --text    type questions instead of speaking them
+#   ./start.sh                 say the wake word, then ask your question
+#   ./start.sh --text          type questions instead of speaking them
+#   ./start.sh --install-only  build the environment and stop (deploy.sh uses this)
 #
 # The first run takes a couple of minutes: it builds a private Python
 # folder and downloads the speech models. After that it starts in seconds.
@@ -28,6 +29,17 @@ fi
 if [ ! -f "$STAMP" ] || [ requirements.txt -nt "$STAMP" ]; then
   echo "Installing the packages it needs..."
   "$VENV/bin/pip" install --quiet -r requirements.txt
+
+  # The wake word, on Linux. It has to go in by hand and without its
+  # dependencies, because openWakeWord insists on tflite-runtime there and
+  # there's no build of that for recent Pythons on Arm. We don't use it —
+  # wake.py loads the ONNX build — and the packages it really needs are in
+  # requirements.txt. Without --no-deps, pip refuses to install anything at
+  # all on a Raspberry Pi.
+  if [ "$(uname -s)" = "Linux" ]; then
+    "$VENV/bin/pip" install --quiet --no-deps 'openwakeword>=0.6.0'
+  fi
+
   touch "$STAMP"
 fi
 
@@ -54,5 +66,14 @@ if ! grep -qE '^[[:space:]]*ANTHROPIC_API_KEY=.+' .env; then
 fi
 
 # --- 5. Go ---
+# deploy.sh stops here: it only wants the environment built, not a speaker
+# listening at the far end of an SSH connection.
+for arg in "$@"; do
+  if [ "$arg" = "--install-only" ]; then
+    echo "Ready."
+    exit 0
+  fi
+done
+
 echo
 exec "$PYTHON" src/main.py "$@"

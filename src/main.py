@@ -28,6 +28,7 @@ def run_voice_mode() -> None:
     the_brain = brain.Brain()
     weather.start()  # Fetches in the background; never blocks a question.
     stt.warm_up()  # Load the speech model now so the first question is fast.
+    tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()
 
     with audio_in.Microphone() as mic:

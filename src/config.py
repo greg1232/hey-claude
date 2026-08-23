@@ -42,8 +42,36 @@ LOCATION = _get("LOCATION", "")
 HOUSEHOLD = _get("HOUSEHOLD", "")
 
 # --- Voice out ---
+# The macOS voice, used by the `say` command. See them all with: say -v '?'
 VOICE = _get("VOICE", "Samantha")
+
+# The Piper voice, used on Linux — that's what the Raspberry Pi speaks with.
+# Listen to them all at https://rhasspy.github.io/piper-samples/
+#
+# Stick to a "medium" voice on a Pi 4. Measured on this one, synthesising a
+# two sentence answer: medium takes 0.32 seconds per second of speech, so it
+# talks three times faster than it can be listened to; "high" takes 2.0
+# seconds per second, so the speaker falls behind its own sentences.
+PIPER_VOICE = _get("PIPER_VOICE", "en_GB-alan-medium")
+
+# How fast to talk, in words per minute. Means the same thing on both
+# machines — tts.py converts it for Piper.
 SPEECH_RATE = int(_get("SPEECH_RATE", "180"))
+
+# How loud, as a percentage. USB speakers often arrive attenuated — the
+# reSpeaker array came set about 20 dB down, quiet enough that you reach for
+# the volume knob and find it already at maximum — so the speaker turns
+# itself up at startup. Lower it if it's too much at night; set it to
+# nothing at all to leave the system mixer alone.
+OUTPUT_VOLUME = _get("OUTPUT_VOLUME", "100")
+
+# Which speaker to play out of. Leave empty for the system default, or set
+# part of a device name or a device number.
+# List them with:  python src/tts.py --devices
+#
+# Worth setting on a Raspberry Pi: ALSA lists the HDMI outputs first, so the
+# default is often a monitor with no speakers rather than the real ones.
+OUTPUT_DEVICE = _get("OUTPUT_DEVICE", "")
 
 # --- Microphone ---
 # Which microphone to use. Leave empty for the system default, or set it to

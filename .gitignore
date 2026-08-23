@@ -6,6 +6,12 @@
 __pycache__/
 *.pyc
 
+# Piper voices, downloaded on first use. About 63 MB each.
+voices/
+
+# Which Pi ./deploy.sh last sent to — local to your machine.
+.deploy-target
+
 # Model caches that get downloaded automatically.
 # models/ is NOT ignored — a wake word you trained yourself belongs in the
 # project, and it's only about a megabyte.

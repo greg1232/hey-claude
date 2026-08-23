@@ -48,6 +48,19 @@ class WakeWordDetector:
         import openwakeword.utils
         from openwakeword.model import Model
 
+        # Every wake word — built-in or your own — is built on two shared
+        # models: one that turns audio into a spectrogram, and one that turns
+        # that into an embedding. They don't ship with the package, and
+        # nothing else fetches them, so without this line a wake word you
+        # trained yourself won't load on a machine that has never run a
+        # built-in one. That was the failure on a fresh Raspberry Pi.
+        #
+        # The empty list means "all of them", so this also brings down the
+        # built-in wake words we don't use — about 12 MB, once. Asking for
+        # less isn't worth the extra moving part, and it's a no-op after the
+        # first run.
+        openwakeword.utils.download_models(model_names=[])
+
         custom = find_custom_model(config.WAKE_MODEL)
 
         if custom is not None:
