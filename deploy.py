@@ -238,10 +238,24 @@ UDEV_RULE = ('SUBSYSTEM=="usb", ATTR{idVendor}=="2886", '
 UDEV_PATH = "/etc/udev/rules.d/60-respeaker.rules"
 
 
-def allow_led_access(pi: Pi) -> None:
-    """Let the speaker talk to the LED ring without sudo."""
-    if pi.output(f"cat {UDEV_PATH} 2>/dev/null").strip() == UDEV_RULE:
+def leds_allowed(pi: Pi) -> bool:
+    return pi.output(f"cat {UDEV_PATH} 2>/dev/null").strip() == UDEV_RULE
+
+
+def allow_led_access(pi: Pi, ask: bool = True) -> None:
+    """Let the speaker talk to the LED ring without sudo.
+
+    This is the one thing here that genuinely needs root once, so a deploy
+    that was asked not to touch system packages says what's needed and
+    leaves it rather than springing a password prompt.
+    """
+    if leds_allowed(pi):
         indent("already allowed")
+        return
+
+    if not ask:
+        indent("not set up yet — the LED ring will stay dark")
+        indent("this needs the Pi's password once:  ./deploy.sh --leds")
         return
 
     indent("adding a udev rule for the microphone array's LEDs")
@@ -407,6 +421,10 @@ def main() -> int:
                         help="start it afterwards and watch")
     parser.add_argument("--service", action="store_true",
                         help="start it on every boot")
+    parser.add_argument("--leds", action="store_true",
+                        help="only add the udev rule that lets the speaker "
+                             "drive the array's LED ring (asks for the Pi's "
+                             "password, once)")
     parser.add_argument("--no-apt", action="store_true",
                         help="skip system packages")
     args = parser.parse_args()
@@ -424,8 +442,17 @@ def main() -> int:
         'echo "$(. /etc/os-release; echo "$PRETTY_NAME") on $(uname -m), '
         'Python $(python3 -V | cut -d" " -f2)"'))
 
+    if args.leds:
+        step("Letting the speaker drive the array's LED ring")
+        allow_led_access(pi)
+        step("Restarting the service so it picks this up")
+        restart_if_running(pi)
+        return
+
     if args.no_apt:
         step("Skipping system packages (--no-apt)")
+        step("Checking the speaker can drive the array's LED ring")
+        allow_led_access(pi, ask=False)
     else:
         step("Installing system packages (sudo may ask for the Pi's password)")
         install_packages(pi)

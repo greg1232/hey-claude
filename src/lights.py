@@ -66,9 +66,18 @@ _broken = False
 
 
 def _connect():
-    """Find the array. Returns None, once and quietly, if anything is wrong."""
+    """Find the array. Returns None, once and quietly, if anything is wrong.
+
+    _broken is checked first and on its own. Checking "already found it or
+    already gave up" in one condition looks equivalent and isn't: the array
+    is found perfectly well and then refuses the write, so _device is set
+    and every later call sailed past the latch and complained again. Four
+    lines in the log per state change, a dozen per question.
+    """
     global _device, _broken
-    if _device is not None or _broken:
+    if _broken:
+        return None
+    if _device is not None:
         return _device
 
     try:
@@ -87,7 +96,7 @@ def _connect():
 
 def show(state: str) -> None:
     """Put the ring into one of the states above."""
-    if not config.LEDS:
+    if not config.LEDS or _broken:
         return
 
     effect, colour, speed = STATES.get(state, STATES["idle"])
@@ -114,7 +123,10 @@ def _send(command: int, payload: bytes) -> None:
             | usb.util.CTRL_RECIPIENT_DEVICE,
             0, command, LED_RESOURCE, payload, 2000)
     except Exception as error:
-        print(f"[lights] off ({error})")
+        print(f"[lights] off for the rest of this run ({error})")
+        if "denied" in str(error).lower():
+            print("[lights] run ./deploy.sh once to add the udev rule "
+                  "that allows this")
         _broken = True
 
 
