@@ -88,6 +88,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/tools.py` | The things it can actually do — timers, weather, search |
 | `src/timers.py` | Timers and alarms, and the ringing |
 | `src/lights.py` | The LED ring on the array, showing what it's doing |
+| `src/sounds.py` | Rain, ocean, a fire — made as they play |
+| `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
@@ -113,12 +115,19 @@ just talk about:
 "hey claude what timers do I have"
 "hey claude what's the weather on Thursday"
 "hey claude who won the game last night"        <- searches the web
+"hey claude play rain until the morning"
 ```
 
-Each of those is a tool in `src/tools.py`. Claude is given the list with
-every question, picks one if the question needs it, and we run it and hand
-back the result; the person hears one answer and never sees the round trip.
-Adding another is one function and one decorator — see the top of that file.
+Each of those is a tool. Claude is given the list with every question,
+picks one if the question needs it, and we run it and hand back the result;
+the person hears one answer and never sees the round trip.
+
+`src/tools.py` is only the framework — collect, describe, run. A tool lives
+next to the code it drives: `timers.py` owns the timer tools, `sounds.py`
+owns the ones that play rain. Adding a capability is a module and a name in
+`FEATURES`; the line in the system prompt telling Claude what the speaker
+can do is generated from the tools, so it can't fall out of step with what
+is actually registered.
 
 Two things worth knowing:
 
@@ -175,6 +184,51 @@ didn't.
 ```
 LEDS=off
 LED_BRIGHTNESS=40
+```
+
+### Background sounds
+
+```
+"hey claude play rain"
+"hey claude put the ocean on for an hour"
+"hey claude stop"
+```
+
+Rain, ocean, fireplace, fan, and white, pink and brown noise — up to 24
+hours. **Nothing here is a recording.** Every sound is made as it plays,
+from filtered noise, which is the right answer on a Pi for three reasons:
+no files to download or license, no memory to hold them in, and no seam. A
+looped recording ticks every time it comes round, and a child lying awake
+listening for the tick will find it.
+
+Two things had to be solved to make this work at all.
+
+**The array plays and listens through one piece of hardware**, and allows
+exactly one stream at a time — so eight hours of rain would otherwise be
+eight hours of a speaker that can't answer. Everything that makes a noise
+wraps itself in `sounds.paused()`, which closes the stream and reopens it
+afterwards, carrying on mid-sound because the filter state is kept. The
+count is kept too, so a beep inside an answer inside a turn nests safely.
+
+**Audio arriving while the speaker talks is normally thrown away**, or it
+wakes itself up. That rule can't apply here or the speaker would be deaf
+all night, so the ambience deliberately doesn't set `tts.speaking` — the
+wake word runs on a microphone that can hear the rain. It works because the
+array cancels its own output in hardware. Measured on the Pi:
+
+```
+                  mic level (median RMS)   highest wake score in 30s
+nothing playing              1454                    0.93
+rain playing                  664                    0.84     (fires at 0.99)
+```
+
+So the rain doesn't trip the wake word, and the room is still audible
+through it. Whether it's audible *enough* to catch "hey claude" from across
+a bedroom is the part only a person can test.
+
+```
+SOUND_VOLUME=0.30
+SOUND_HOURS=8
 ```
 
 ### Web search
