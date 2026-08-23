@@ -37,7 +37,12 @@ EXCLUDE = (".git/", ".venv/", ".env", ".deploy-target", "__pycache__/",
            ".DS_Store")
 
 APT_PACKAGES = ("python3-venv", "libportaudio2", "libsndfile1", "espeak-ng",
-                "alsa-utils")
+                "alsa-utils",
+                # Lets ALSA programs — which is everything here — go through
+                # PipeWire instead of seizing the sound card. Without it the
+                # microphone array really does allow one thing at a time, so
+                # music and speech cannot both exist.
+                "pipewire-alsa")
 
 # The Pi is a different machine, so a few settings can't come across as they
 # are: the microphone name is the laptop's, and the voice is a macOS one.
@@ -290,6 +295,75 @@ def allow_led_access(pi: Pi, ask: bool = True) -> None:
            " --attr-match=idVendor=2886", tty=True)
 
 
+# Spotify's own client for small machines. Its Debian package carries the
+# librespot binary; the service that comes with it runs as its own system
+# user, which cannot reach this user's PipeWire, so it is turned off and
+# replaced with a user service like the speaker's.
+RASPOTIFY = ("https://github.com/dtcooper/raspotify/releases/download/"
+             "0.48.2/raspotify_0.48.2.librespot.v0.8.0-9c7d756_arm64.deb")
+
+LIBRESPOT_UNIT = """[Unit]
+Description=Spotify Connect (librespot)
+After=pipewire.service
+
+[Service]
+ExecStart=/usr/bin/librespot --name "{name}" --backend pulseaudio \\
+    --bitrate 160 --cache %h/.cache/librespot --device-type speaker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def install_spotify(pi: Pi) -> None:
+    """Put librespot on the Pi, as this user's own service.
+
+    No Spotify password goes anywhere near the Pi. librespot advertises
+    itself on the network and you pick it once in the phone app, which is
+    how it gets its credentials; after that they are cached and the Web
+    API can see it as a speaker to play to.
+    """
+    if pi.output("which librespot").strip():
+        indent("librespot already installed")
+    else:
+        indent("downloading and installing librespot")
+        pi.run(f"curl -fsSL -o /tmp/raspotify.deb {RASPOTIFY} && "
+               "sudo dpkg -i /tmp/raspotify.deb; "
+               # Its own service runs as the raspotify user, which has no
+               # PipeWire of its own and so can never make a sound here.
+               "sudo systemctl disable --now raspotify 2>/dev/null; true",
+               tty=True)
+
+    unit = LIBRESPOT_UNIT.format(
+        name=setting("SPOTIFY_DEVICE", "Claude Speaker"))
+    handle, path = tempfile.mkstemp()
+    try:
+        Path(path).write_text(unit)
+        pi.run("mkdir -p ~/.config/systemd/user", quiet=True)
+        pi.send(Path(path), "~/.config/systemd/user/librespot.service")
+    finally:
+        os.close(handle)
+        os.unlink(path)
+
+    pi.run("systemctl --user daemon-reload && "
+           "systemctl --user enable --now librespot", quiet=True)
+    indent("librespot is "
+           + (pi.output("systemctl --user is-active librespot").strip()
+              or "not running"))
+
+
+def setting(name: str, fallback: str) -> str:
+    """Read one value out of the local .env, without importing anything."""
+    env = HERE / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip() or fallback
+    return fallback
+
+
 def copy_code(pi: Pi) -> None:
     pi.run(f"mkdir -p ~/{REMOTE_DIR}", quiet=True)
     # Plain flags only: macOS still ships rsync 2.6.9, which doesn't know
@@ -482,6 +556,9 @@ def main() -> int:
 
         step("Letting the speaker drive the array's LED ring")
         allow_led_access(pi)
+
+        step("Installing Spotify Connect")
+        install_spotify(pi)
 
     step("Copying the code")
     copy_code(pi)

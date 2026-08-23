@@ -190,6 +190,22 @@ SOUND_HOURS = float(_get("SOUND_HOURS", "8"))
 FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 
 
+# --- Spotify ---
+# Playing music needs a Spotify Premium account: librespot, which does the
+# streaming on the Pi, cannot play at all on a free one.
+#
+# The id and secret come from a free app at
+# https://developer.spotify.com/dashboard, and the refresh token from
+# running train/spotify_login.py once on a machine with a browser. The
+# speaker never sees your password.
+SPOTIFY_CLIENT_ID = _get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = _get("SPOTIFY_CLIENT_SECRET", "")
+SPOTIFY_REFRESH_TOKEN = _get("SPOTIFY_REFRESH_TOKEN", "")
+
+# What the Pi calls itself in the Spotify app's device list.
+SPOTIFY_DEVICE = _get("SPOTIFY_DEVICE", "Claude Speaker")
+
+
 if __name__ == "__main__":
     # Print what the speaker will actually use, which is not always what you
     # think you set — .env overrides these, and a typo in a name is silent.

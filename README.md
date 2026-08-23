@@ -91,6 +91,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/sounds.py` | Rain, ocean, a fire — made as they play |
 | `src/effects.py` | Real recordings — what a bullfrog sounds like |
 | `src/books.py` | Reads books aloud, and remembers the place |
+| `src/music.py` | Spotify — search, play, skip, volume |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/wake_log.py` | Writes down every wake-word firing, to learn from |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
@@ -102,6 +103,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/record_room.py` | Records the room not saying it |
 | `train/train_whisper_wake.py` | Trains the wake word |
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
+| `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | `train/label_wakes.py` | Decides which logged firings were real |
 | `train/relearn.py` | Retrains on them, in about a second |
 | `train/test_wake.py` | Checks it hears you |
@@ -285,6 +287,48 @@ among them.
 seconds rather than an evening, and matched loosely on the way back:
 LibriVox files A Tale of Two Cities as "Tale of Two Cities", so an exact
 lookup would find nothing and start the book again from the beginning.
+
+### Music
+
+```
+"hey claude, play Baby Shark"
+"hey claude, skip this one"
+"hey claude, turn the music down a bit"
+"hey claude, stop the music"
+```
+
+Needs **Spotify Premium**: librespot, which does the streaming on the Pi,
+cannot play at all on a free account.
+
+Two halves. `librespot` runs as a user service and makes the Pi a Spotify
+Connect speaker, the same as a Sonos as far as Spotify is concerned — **no
+Spotify password goes near the Pi**; you pick it once in the phone app,
+which is how it gets its credentials, and they are cached after. `music.py`
+is the other half: the Web API, which searches and says what to play where.
+It never touches audio, so an hour of music costs the Pi about as much as
+an hour of silence.
+
+Setting it up: make a free app at
+[developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+with redirect URI `http://127.0.0.1:8888/callback` (Spotify insists on
+127.0.0.1, not localhost), put the id and secret in `.env`, and run
+`python train/spotify_login.py` once on a machine with a browser. Then
+`./deploy.sh` installs librespot, and you pick "Claude Speaker" in the
+Spotify app once.
+
+**Mixing, rather than taking turns.** Everything else here closes the sound
+device and reopens it, because the array allows one stream at a time. Music
+doesn't have to: `pipewire-alsa` puts PipeWire between the programs and the
+hardware, so the music simply gets quieter while the speaker talks and
+comes back after — Spotify does the ducking on its own side, in one call.
+Installing it had a second benefit nobody was looking for: PortAudio now
+offers the voice's own 22 kHz rate, so answers are no longer resampled to
+the array's 16 kHz on the way out.
+
+Two things measured rather than assumed: Spotify's search `limit` is
+documented as up to 50 and an app in development mode gets 400 "Invalid
+limit" above **ten**; and skipping a track answers 200 with a bare tracking
+id rather than JSON, which is not an error and must not be read as one.
 
 ### Web search
 
