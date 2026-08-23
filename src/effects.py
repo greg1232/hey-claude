@@ -35,6 +35,8 @@ import io
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -310,6 +312,8 @@ def from_commons(search: str):
         # engine siren, because the filename has no spaces in it and so
         # matched none of "fire", "truck" or "siren" as whole words.
         # Substrings catch that; Claude throws out the rest by reading.
+        if not title.lower().endswith(PLAYABLE):
+            continue
         squashed = re.sub(r"[^a-z]", "", title.lower())
         words = set(re.findall(r"[a-z]+", title.lower()))
         wanted = set(search.split()) - VAGUE
@@ -324,11 +328,31 @@ def from_commons(search: str):
             for _o, s, t, u in scored[:DEEP]]
 
 
+# What soundfile can actually decode. Commons files everything under
+# "filetype:audio" including MIDI, which is a score rather than a sound and
+# fails to open — six of the first ten anvil candidates were guitar tabs.
+PLAYABLE = (".ogg", ".oga", ".opus", ".mp3", ".wav", ".flac", ".m4a", ".aac")
+
+
 def _get(url: str, binary: bool = False):
+    """Fetch, waiting and trying once more if the library asks us to.
+
+    Wikimedia rate-limits, and it does so exactly when this is most likely
+    to be useful — several searches and a download in quick succession.
+    Measured: ten downloads back to back gave nine failures, and the same
+    ten with a breath between them gave none.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": AGENT})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read()
-    return raw if binary else raw.decode("utf-8", "replace")
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read()
+            return raw if binary else raw.decode("utf-8", "replace")
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 503) or attempt:
+                raise
+            time.sleep(1.5)
+    raise RuntimeError("unreachable")
 
 
 def _slug(search: str) -> str:
