@@ -91,6 +91,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/sounds.py` | Rain, ocean, a fire — made as they play |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/wake_log.py` | Writes down every wake-word firing, to learn from |
+| `src/enroll.py` | Learns a voice from somebody repeating the wake word |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
@@ -583,6 +584,60 @@ weaker in both directions, 63% on real ones, and not worth it either.
 
 Which is a decent independent argument that the 768-number classifier is
 doing real work a general speech model won't do for free.
+
+## Teaching it your voice
+
+```
+"hey claude, I want to teach you what my voice sounds like"
+"Say hey Claude about ten times while the light is purple, with a
+ pause between each, and it'll go out when I've got enough."
+"hey claude ... hey claude ... hey claude ..."
+"Got eight. Give me a moment to learn them."
+```
+
+Nobody labels anything. The person was asked to repeat the wake word, so
+every segment is the wake word by construction. That is the whole trick,
+and it's the only cure for recall that doesn't involve sitting down with a
+laptop and `record_wake.py`.
+
+**The ring is the interface.** A spoken "stop when you're done" would be
+recorded along with the repetitions, so the light has to carry it: purple
+while listening, out when it has enough.
+
+**It has to be able to reject rubbish**, since it is about to train on
+whatever it heard. Each segment becomes the same 768 numbers the detector
+scores, and anything that doesn't resemble the others is dropped — a
+cough, a chair, a sibling shouting. That comparison must be made on
+*standardised* vectors. Raw Whisper features share a large common
+component and everything looks alike: a burst of noise scored 0.905
+against real repetitions' 0.965, which is not a gap you can cut on.
+Subtract the model's own mean and divide by its scale, and the same burst
+falls to 0.09 against 0.62–0.81.
+
+What it must *not* do is filter on the wake score. The repetitions worth
+learning from are exactly the ones the model currently misses — two of
+seven in testing scored 0.42 and 0.01 — so scoring them would keep only
+what already works.
+
+**Each repetition is then slid around the window**, six times, using the
+pauses between the repetitions as room noise. The recording brings its own
+backgrounds, which means this works on a machine with no room-noise
+library. Measured on a voice the model had never met:
+
+```
+never met them             55% recall at threshold 0.8
+8 recordings as they came  59%
+8 placed at 6 offsets      64%
+```
+
+with no change in false wakes. That is the honest size of it: a few points
+of recall, not a transformation. The features are frozen, and 48 new
+examples against a bank of 2708 can only move a linear model so far. It
+stacks with the threshold, which is the bigger lever.
+
+Then it refits (under a second) and reloads the four small arrays without
+touching the 56 MB encoder, so it takes effect while you're standing
+there.
 
 ## Learning from its own mistakes
 
