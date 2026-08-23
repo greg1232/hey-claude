@@ -283,10 +283,26 @@ Nothing to install and nothing runs on the Pi: it copies the clips down,
 serves them from your laptop on a free port, and appends your answers when
 you stop.
 
-It leads with the firings the machine could not label by itself, because
-those are the ones it will be fitted on either way. Then near misses that
-somebody repeated seconds later, which are the recall failures and cannot
-be found any other way. Sixty at a time; `--all` for the lot.
+It picks the firings the machine could not label by itself, because those
+are the ones it will be fitted on either way, then near misses somebody
+repeated seconds later, which are the recall failures and cannot be found
+any other way. Sixty at a time; `--all` for the lot.
+
+**Then it shuffles them**, and mixes in about one in six clips that really
+are the wake word. Sorted by kind you get a run of twenty television clips
+and start answering "no" without listening, which is worse than not
+labelling at all. The known ones do two jobs: they tell somebody who has
+never done this what a real wake word sounds like through this array — not
+obvious, since it compresses hard and a real one can be quieter than a
+television — and afterwards they say whether the answers can be trusted.
+They have negative numbers and are never sent to the Pi.
+
+Two things had to be fixed before any of it worked. Clips are turned up on
+the way out, because they come off the Pi at about sixteen decibels below
+full scale and through laptop speakers that is indistinguishable from
+nothing playing. And the first one waits for a click: browsers refuse to
+play sound before you have interacted with the page, and refuse silently,
+which looks exactly like a broken audio player.
 
 ## Nightly retraining, and why it can refuse
 

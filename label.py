@@ -26,7 +26,9 @@ you're finished.
 
 import argparse
 import http.server
+import io
 import json
+import random
 import shutil
 import subprocess
 import sys
@@ -39,6 +41,15 @@ HERE = Path(__file__).resolve().parent
 TARGET_FILE = HERE / ".deploy-target"
 REMOTE = "claude-speaker/state/wakes"
 CACHE = HERE / "state" / "labelling"
+KNOWN = CACHE / "known"          # clips that really are the wake word
+# Where known-good wake words come from, best first. Enrolled clips are two
+# second windows recorded in this room through this array, so they sound
+# like the rest; the training recordings are trimmed phrases and stand out
+# slightly, which is why they are the fallback.
+KNOWN_FROM = ("claude-speaker/state/enrolled", None)
+# Roughly one in six, which is enough to notice if somebody has stopped
+# listening without wasting much of their time.
+KNOWN_SHARE = 0.16
 # Where to serve the page. If something else already has this port — and
 # on a developer's laptop something usually does — take whatever is free.
 PORT = 8899
@@ -62,10 +73,19 @@ def fetch(pi: str) -> None:
     CACHE.mkdir(parents=True, exist_ok=True)
     print(f"Fetching clips from {pi}...")
     done = subprocess.run(
-        ["rsync", "-az", "--delete", f"{pi}:{REMOTE}/", f"{CACHE}/"],
+        ["rsync", "-az", "--delete", "--exclude", "known/",
+         f"{pi}:{REMOTE}/", f"{CACHE}/"],
         capture_output=True, text=True)
     if done.returncode != 0:
         raise SystemExit(f"Couldn't fetch:\n{done.stderr.strip()}")
+
+    KNOWN.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["rsync", "-az", f"{pi}:{KNOWN_FROM[0]}/", f"{KNOWN}/"],
+                   capture_output=True, text=True)
+    if not any(KNOWN.glob("*.wav")):
+        for clip in sorted((HERE / "train" / "real" / "hey_claude")
+                           .glob("*.wav")):
+            shutil.copy(clip, KNOWN / clip.name)
 
 
 def load(everything: bool) -> list[dict]:
@@ -88,6 +108,10 @@ def load(everything: bool) -> list[dict]:
         clip = CACHE / "audio" / f"{number:06d}.wav"
         if not clip.exists() or row.get("taught"):
             continue
+        # Nothing to listen to. Firings logged before the buffer-aliasing
+        # bug was fixed are all like this — see src/whisper_wake.py.
+        if peak_of(clip) == 0:
+            continue
         if not everything and row.get("by") == "person":
             continue
         out.append({
@@ -107,7 +131,44 @@ def load(everything: bool) -> list[dict]:
     # through. Four hundred clips newest-first means half an hour of the
     # room being quiet before you reach anything that decides the model.
     out.sort(key=lambda c: c["rank"])
-    return out if everything else out[:MOST]
+    if not everything:
+        out = out[:MOST]
+
+    # Then shuffled. Sorted by kind, you get a run of twenty television
+    # clips and start answering "no" without listening, which is worse
+    # than not labelling at all.
+    out += _known(max(2, int(len(out) * KNOWN_SHARE / (1 - KNOWN_SHARE))))
+    random.shuffle(out)
+    return out
+
+
+def _known(how_many: int) -> list[dict]:
+    """Clips that really are the wake word, mixed in unannounced.
+
+    Two jobs. They tell somebody who has never done this what a real one
+    sounds like through this microphone, which is not obvious — the array
+    compresses hard and a real wake word can be quieter than a television.
+    And they say afterwards whether the answers can be trusted, because
+    somebody twenty minutes in and clicking quickly will start missing
+    them, and there is no other way to know that happened.
+    """
+    clips = sorted(KNOWN.glob("*.wav"))
+    if not clips:
+        return []
+    random.shuffle(clips)
+    return [{
+        "n": -(i + 1),               # negative, so it is never sent back
+        "known": clip.name,
+        "rank": 0,
+        "score": 0.0,
+        "at": "",
+        "near": False,
+        "repeated": False,
+        "heard": "",
+        "window": "",
+        "guess": None,
+        "why": "",
+    } for i, clip in enumerate(clips[:how_many])]
 
 
 # How much a person's answer is worth on each kind of clip, lowest first.
@@ -125,14 +186,25 @@ def _usefulness(row: dict) -> int:
     return 2 if row.get("repeated") else 3
 
 
+def marked() -> tuple[int, int]:
+    """How the known wake words were answered: (right, asked)."""
+    known = {n: label for n, label in _answers.items() if n < 0}
+    return sum(known.values()), len(known)
+
+
 def push(pi: str) -> int:
-    """Send the answers back, as lines appended to the Pi's log."""
-    if not _answers:
+    """Send the answers back, as lines appended to the Pi's log.
+
+    The known wake words have negative numbers and are dropped here. They
+    were never rows in the log and must not become rows in it.
+    """
+    real = {n: label for n, label in _answers.items() if n >= 0}
+    if not real:
         return 0
     lines = "\n".join(json.dumps({
         "n": number, "label": label, "by": "person",
         "why": "listened to by a person",
-    }) for number, label in sorted(_answers.items()))
+    }) for number, label in sorted(real.items()))
     done = subprocess.run(
         ["ssh", pi, f"cat >> {REMOTE}/wakes.jsonl"],
         input=lines + "\n", text=True, capture_output=True)
@@ -140,6 +212,56 @@ def push(pi: str) -> int:
         print(f"Couldn't save to the Pi:\n{done.stderr.strip()}")
         return 0
     return len(_answers)
+
+
+def peak_of(clip: Path) -> int:
+    """How loud the loudest sample in a clip is, 0 to 32767."""
+    import wave
+    try:
+        with wave.open(str(clip), "rb") as handle:
+            raw = handle.readframes(handle.getnframes())
+    except Exception:
+        return 0
+    if not raw:
+        return 0
+    return max(abs(int.from_bytes(raw[i:i + 2], "little", signed=True))
+               for i in range(0, len(raw), 2))
+
+
+def loud(clip: Path) -> bytes:
+    """The clip, turned up so a person can actually hear it.
+
+    These are recordings of a room made through an array that cancels and
+    compresses hard. They come off the Pi at about sixteen decibels below
+    full scale, with a lot of them much quieter than that, which through
+    laptop speakers is indistinguishable from nothing playing at all.
+    """
+    import wave
+
+    with wave.open(str(clip), "rb") as handle:
+        rate = handle.getframerate()
+        width = handle.getsampwidth()
+        channels = handle.getnchannels()
+        raw = handle.readframes(handle.getnframes())
+
+    peak = peak_of(clip)
+    if peak and width == 2:
+        gain = min(28000 / peak, 40.0)   # capped, or silence becomes hiss
+        out = bytearray(len(raw))
+        for i in range(0, len(raw) - 1, 2):
+            sample = int(int.from_bytes(raw[i:i + 2], "little", signed=True)
+                         * gain)
+            sample = max(-32768, min(32767, sample))
+            out[i:i + 2] = sample.to_bytes(2, "little", signed=True)
+        raw = bytes(out)
+
+    made = io.BytesIO()
+    with wave.open(made, "wb") as handle:
+        handle.setnchannels(channels)
+        handle.setsampwidth(width)
+        handle.setframerate(rate)
+        handle.writeframes(raw)
+    return made.getvalue()
 
 
 class Pages(http.server.BaseHTTPRequestHandler):
@@ -152,7 +274,11 @@ class Pages(http.server.BaseHTTPRequestHandler):
         if path.startswith("/audio/"):
             clip = CACHE / "audio" / Path(path).name
             if clip.is_file():
-                return self._send(clip.read_bytes(), "audio/wav")
+                return self._send(loud(clip), "audio/wav")
+        if path.startswith("/known/"):
+            clip = KNOWN / Path(path).name
+            if clip.is_file():
+                return self._send(loud(clip), "audio/wav")
         self.send_error(404)
 
     def do_POST(self):                                   # noqa: N802
@@ -201,6 +327,8 @@ button:hover{background:#8881}
 .bar{height:4px;background:#8883;border-radius:2px;margin-top:1.5rem}
 .bar div{height:100%;background:#8888;border-radius:2px;width:0}
 .done{text-align:center;padding:3rem 1rem}
+.nudge{margin-bottom:1rem}
+.nudge button{width:100%}
 kbd{border:1px solid var(--edge);border-radius:4px;padding:0 .35rem;
     font-size:.8em}
 </style>
@@ -226,15 +354,19 @@ function show(){
     return;
   }
   const c=clips[at];
-  const tags=[c.near?'nearly fired':'fired', 'score '+c.score.toFixed(3), c.at]
+  const tags = c.known ? [] :
+    [c.near?'nearly fired':'fired', 'score '+c.score.toFixed(3), c.at]
     .concat(c.repeated?['said again seconds later']:[])
     .concat(c.guess!=null?['it guessed '+(c.guess?'yes':'no')]:[]);
   box.innerHTML=
     '<div class=card><div class=meta>'+
       tags.map(t=>'<span class=tag>'+t+'</span>').join('')+
     '</div>'+
-    '<audio id=a controls autoplay src="/audio/'+
-      String(c.n).padStart(6,'0')+'.wav"></audio>'+
+    '<audio id=a controls src="'+
+      (c.known ? '/known/'+c.known : '/audio/'+String(c.n).padStart(6,'0')+'.wav')+
+      '"></audio>'+
+    '<div id=nudge class=nudge><button onclick="start()">'+
+      'Click to start listening</button></div>'+
     '<div class=said>'+
       (c.window?'the two seconds sounded like <b>'+esc(c.window)+'</b><br>':'')+
       (c.heard?'what came next: <b>'+esc(c.heard)+'</b>':
@@ -246,8 +378,21 @@ function show(){
       '<button class=skip onclick="skip()">Skip</button>'+
     '</div></div>';
   bar.style.width=(100*at/clips.length)+'%';
+  if(unlocked) play();
 }
 function esc(s){return s.replace(/[<>&]/g,m=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[m]))}
+// Browsers refuse to play sound until you have interacted with the page,
+// and refuse silently — which looks exactly like a broken audio player.
+// So the first one waits for a click, and every one after it plays itself.
+let unlocked=false;
+function play(){
+  const a=document.getElementById('a'); if(!a) return;
+  a.currentTime=0;
+  a.play().then(()=>{unlocked=true}).catch(()=>{
+    const n=document.getElementById('nudge'); if(n) n.hidden=false;
+  });
+}
+function start(){document.getElementById('nudge').hidden=true; play()}
 function say(label){
   fetch('/',{method:'POST',body:JSON.stringify({n:clips[at].n,label})});
   done++; at++; show();
@@ -302,6 +447,15 @@ def main() -> int:
     except KeyboardInterrupt:
         print()
     server.shutdown()
+
+    right, asked = marked()
+    if asked:
+        print(f"Of {asked} clips that really were the wake word, "
+              f"you said yes to {right}.")
+        if right < asked:
+            print("  The ones you missed are worth hearing again — either "
+                  "they are hard,\n  or it was time to stop. Run "
+                  "./label.sh again whenever.")
 
     sent = push(pi)
     print(f"Saved {sent} answer{'s' if sent != 1 else ''} to the Pi."

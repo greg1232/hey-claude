@@ -103,7 +103,13 @@ class WhisperWakeDetector:
         vector = np.concatenate([encoded.mean(0), encoded.max(0)])
         standardised = (vector - self._mean) / self._scale
         self.last_vector = vector
-        self.last_audio = audio
+        # A copy, not the buffer itself. reset() zeroes the rolling
+        # buffer in place, and last_audio pointed straight at it — so
+        # every firing's recording was overwritten with silence a moment
+        # after it was taken. A hundred and twenty four of four hundred
+        # saved clips were digital silence, and they were the firings,
+        # which are the ones worth listening to.
+        self.last_audio = np.asarray(audio).copy()
         self.last_score = float(1.0 / (1.0 + np.exp(
             -(standardised @ self._coef + self._intercept))))
         return self.last_score
