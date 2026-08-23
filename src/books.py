@@ -79,15 +79,31 @@ _stop = threading.Event()
 
 
 def find(title: str):
-    """A book to read, audio for preference. None if there isn't one."""
-    spoken = _from_librivox(title)
-    if spoken is not None:
-        return spoken
-    return _from_gutenberg(title)
+    """The single best book for a title. Used by the command line and tests."""
+    found = search(title)
+    return _build(found[0]) if found else None
 
 
-def _from_librivox(title: str):
-    """A human-read recording, if one exists."""
+def search(title: str, limit: int = 12) -> list[dict]:
+    """Everything that might be the book they meant, best guess first.
+
+    Deliberately does not choose. Libraries are full of things that match
+    a title and are not the book: three different recordings of Peter Pan
+    of very different lengths, an abridgement, a sequel, a critical essay
+    about it, a different author with the same title. Claude picks, with
+    the author and the length and the subjects in front of it, and asks
+    when it genuinely can't tell — see the tools at the bottom.
+    """
+    found = _from_librivox(title, limit)
+    found += _from_gutenberg(title, limit)
+    # A long list on purpose. Choosing between twenty titles by author and
+    # length is exactly what Claude is good at, and narrowing it here is
+    # how the wrong Peter Pan gets read.
+    return found[:limit * 2]
+
+
+def _from_librivox(title: str, limit: int = 5) -> list[dict]:
+    """Human-read recordings that match the title."""
     found = {}
     # LibriVox matches titles closely, and its own are usually filed
     # without the article — "Tale of Two Cities", "Velveteen Rabbit". Asked
@@ -95,7 +111,7 @@ def _from_librivox(title: str):
     # back to reading the text itself, which is a much worse evening.
     for wanted in _title_guesses(title):
         query = urllib.parse.urlencode({
-            "format": "json", "extended": "1", "limit": "3",
+            "format": "json", "extended": "1", "limit": str(limit),
             "title": wanted,
         })
         try:
@@ -108,7 +124,8 @@ def _from_librivox(title: str):
         if found.get("books"):
             break
 
-    for book in found.get("books", []):
+    out = []
+    for book in found.get("books", [])[:limit]:
         chapters = [
             {"title": s.get("title") or f"Chapter {s.get('section_number')}",
              "url": s["listen_url"],
@@ -116,10 +133,19 @@ def _from_librivox(title: str):
             for s in (book.get("sections") or []) if s.get("listen_url")]
         if not chapters:
             continue
-        return Spoken(book.get("title", title),
-                      (book.get("authors") or [{}])[0].get("last_name", ""),
-                      chapters)
-    return None
+        author = (book.get("authors") or [{}])[0]
+        out.append({
+            "kind": "spoken",
+            "title": book.get("title", title),
+            "by": ", ".join(x for x in (author.get("last_name"),
+                                        author.get("first_name")) if x),
+            "chapters": chapters,
+            "parts": len(chapters),
+            "hours": sum(c["seconds"] for c in chapters) / 3600,
+            "language": book.get("language", ""),
+            "about": (book.get("description") or "")[:200],
+        })
+    return out
 
 
 def _title_guesses(title: str) -> list[str]:
@@ -131,12 +157,26 @@ def _title_guesses(title: str) -> list[str]:
     return guesses
 
 
-def _from_gutenberg(title: str):
-    """The text, read by Piper, for anything nobody has recorded."""
-    match = search_index(title, 1)
-    if not match:
-        return None
-    return Printed(match[0])
+def _from_gutenberg(title: str, limit: int = 5) -> list[dict]:
+    """Texts that match, to be read by Piper. No network needed."""
+    return [{
+        "kind": "printed",
+        "title": entry["title"],
+        "by": entry.get("by", ""),
+        "entry": entry,
+        "parts": 0,          # Not known without fetching the book.
+        "hours": 0.0,
+        "language": "en",
+        "about": "; ".join(entry.get("about") or [])[:200],
+        "shelves": entry.get("shelves") or [],
+    } for entry in search_index(title, limit)]
+
+
+def _build(found: dict):
+    """Turn one candidate into something that can be read."""
+    if found["kind"] == "spoken":
+        return Spoken(found["title"], found["by"], found["chapters"])
+    return Printed(found["entry"])
 
 
 def search_index(wanted: str, limit: int = 5) -> list[dict]:
@@ -529,36 +569,90 @@ def recall(title: str):
 # --- what Claude can ask for ------------------------------------------------
 
 
+_offered: list[dict] = []
+
+
 @tools.tool(
-    "Read a book aloud. Use this for 'read me Treasure Island', 'can you "
-    "read me a story'. If they've had this book before it carries on where "
-    "they stopped, so say so rather than starting again. Reading begins as "
-    "soon as you finish speaking, so keep the reply to one short sentence.",
+    "Look for a book to read aloud. This does NOT start reading — it hands "
+    "back what the libraries have, and you choose. Always call this first.\n\n"
+    "Look at what comes back before picking. A title match is not the book: "
+    "there are usually several recordings of a well known story, of very "
+    "different lengths, and among them an abridgement, a sequel, a parody, "
+    "or a different author's book of the same name. Judge by the author, "
+    "the length and the subjects. Prefer one read by a person over one read "
+    "by the computer, and prefer a full-length recording over a short one "
+    "unless they asked for something short.\n\n"
+    "If one is clearly right, call play_book straight away in the same "
+    "breath. Only ask them which they want when you genuinely cannot tell "
+    "the difference from what you can see.",
     properties={
         "title": {
             "type": "string",
-            "description": "The book's title, as best you can tell. If they "
-                           "just asked for a story, choose something from "
-                           "the children's shelf and name it.",
+            "description": "The book to look for. If they just asked for a "
+                           "story, choose something from a children's shelf "
+                           "and search for that.",
         },
     },
     required=["title"],
     says="read books aloud and remember where you got to",
 )
-def read_book(title: str) -> str:
-    global _reader
+def find_book(title: str) -> str:
+    global _offered
     title = title.strip()
     if not title:
         return "Which book?"
 
-    remembered = recall(title)
-    book = remembered or find(title)
-    if book is None:
-        near = search_index(title, 3)
-        if near:
-            return ("I couldn't find that one. I do have "
-                    + ", ".join(b["title"][:40] for b in near) + ".")
-        return f"I couldn't find a book called {title}."
+    _offered = search(title)
+    if not _offered:
+        return f"Nothing in either library matches {title}."
+
+    lines = []
+    for number, found in enumerate(_offered, 1):
+        where = _saved_place(found["title"])
+        how = ("read by a person" if found["kind"] == "spoken"
+               else "no recording, I would read it")
+        length = (f"{found['parts']} chapters, {found['hours']:.1f} hours"
+                  if found["parts"] else "length unknown")
+        line = (f"{number}. {found['title']} by {found['by'] or 'unknown'} "
+                f"— {how}, {length}")
+        if found.get("about"):
+            line += f". About: {found['about'][:120]}"
+        if where:
+            line += (f". You have this one open at chapter "
+                     f"{where.get('at', 0) + 1}")
+        lines.append(line)
+    return ("Choose one and call play_book with its number:\n"
+            + "\n".join(lines))
+
+
+@tools.tool(
+    "Start reading one of the books find_book offered, by its number. If "
+    "they have had this book before it carries on where they stopped, so "
+    "say so rather than starting again. Reading begins as soon as you "
+    "finish speaking, so keep the reply to one short sentence.",
+    properties={
+        "number": {
+            "type": "integer",
+            "description": "Which of the books from find_book, counting "
+                           "from 1.",
+        },
+    },
+    required=["number"],
+)
+def play_book(number: int) -> str:
+    global _reader
+    if not _offered:
+        return "Look for a book first with find_book."
+    if not 1 <= int(number) <= len(_offered):
+        return f"There were only {len(_offered)} to choose from."
+
+    chosen = _offered[int(number) - 1]
+    remembered = recall(chosen["title"])
+    try:
+        book = remembered or _build(chosen)
+    except Exception as error:
+        print(f"[books] {type(error).__name__}: {error}")
+        return "I couldn't open that one."
 
     with _lock:
         _reader = book
@@ -658,7 +752,8 @@ if __name__ == "__main__":
             print(f"  {book['title'][:52]:54} {book['by'][:30]}")
         raise SystemExit
 
-    print(read_book(" ".join(sys.argv[1:]) or "treasure island"))
+    print(find_book(" ".join(sys.argv[1:]) or "treasure island"))
+    print(play_book(1))
     try:
         time.sleep(float(sys.argv[-1]) if sys.argv[-1].replace(".", "").isdigit()
                    else 30)
