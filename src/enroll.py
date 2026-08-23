@@ -45,9 +45,14 @@ import wake_log
 
 KEPT = config.PROJECT_ROOT / "state" / "enrolled"
 
-# How long to listen for repetitions, and when to decide they've stopped.
+# How long to listen for repetitions once they've started, and how much
+# quiet means they've finished.
 LISTEN_SECONDS = 25.0
 DONE_AFTER_QUIET = 2.5
+# And how long to wait for them to begin at all. Somebody who has just been
+# told what to do takes a moment to draw breath, and the whole thing used
+# to give up during that breath.
+WAIT_TO_START = 12.0
 
 # A "hey Claude" is about three-quarters of a second. Anything much shorter
 # is a knock, anything much longer is a sentence.
@@ -108,16 +113,20 @@ def _run(mic, waker, say) -> None:
     import lights
     import tts
 
-    tts.beep()
-    # The ring is the whole interface here. There is nothing else to tell
-    # somebody that a recording is running, or when to stop, and a spoken
-    # instruction would be recorded along with them.
+    # Light first, then the beep. Opening the sound device on a Pi means
+    # enumerating ALSA, which takes a moment, and the light going on is the
+    # only signal the person has that anything is happening.
     lights.show("learning")
+    tts.beep()
     print(f"Listening for repetitions from {_who}...")
     audio = listen(mic)
     lights.show("thinking")
     seconds = len(audio) / config.SAMPLE_RATE
     print(f"  recorded {seconds:.1f}s")
+
+    if seconds < 1.0:
+        say("I didn't hear anything at all. Ask me again when you're ready.")
+        return
 
     segments = cut_up(audio, mic.noise_floor())
     print(f"  found {len(segments)} candidate repetitions")
@@ -151,23 +160,54 @@ def _run(mic, waker, say) -> None:
 
 
 def listen(mic) -> np.ndarray:
-    """Record until they stop repeating themselves, or time runs out."""
+    """Record until they stop repeating themselves, or time runs out.
+
+    Two things here were wrong the first time and are worth keeping written
+    down, because both looked like the microphone being broken.
+
+    The queue has to be thrown away first. Audio is only discarded while
+    the speaker is talking, and beeping on a Pi means enumerating ALSA and
+    opening the output device, which takes seconds — all of it recorded.
+    So the first thing this saw was several seconds of stale room, which
+    is silence, which it took for somebody who had finished.
+
+    And the silence rule can only apply after they have started. It used to
+    stop as soon as it held four seconds of anything and two and a half of
+    quiet, so it gave up during the breath somebody takes after being told
+    what to do. Now it waits WAIT_TO_START for a first word and only then
+    starts looking for the end.
+    """
     from audio_in import loudness
 
+    mic.flush()
     floor = mic.noise_floor()
     chunk_seconds = config.BLOCK_SIZE / config.SAMPLE_RATE
     chunks: list[np.ndarray] = []
     quiet = 0.0
+    started = False
     began = time.monotonic()
 
-    while time.monotonic() - began < LISTEN_SECONDS:
+    while True:
+        waited = time.monotonic() - began
+        if started and waited > LISTEN_SECONDS + WAIT_TO_START:
+            break
+        if not started and waited > WAIT_TO_START:
+            print("  nobody started")
+            break
+
         chunk = mic.read(timeout=1.0)
         if chunk is None:
             continue
+
+        loud = loudness(chunk) >= floor
+        if loud:
+            started = True
+        if not started:
+            continue  # Still waiting for a first word; don't keep the room.
+
         chunks.append(chunk)
-        quiet = 0.0 if loudness(chunk) >= floor else quiet + chunk_seconds
-        # Don't stop on the pause before they've started.
-        if quiet >= DONE_AFTER_QUIET and len(chunks) * chunk_seconds > 4.0:
+        quiet = 0.0 if loud else quiet + chunk_seconds
+        if quiet >= DONE_AFTER_QUIET:
             break
 
     return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)

@@ -233,6 +233,24 @@ def _play(device, rate: int, audio) -> None:
     with sd.OutputStream(samplerate=rate, channels=1, dtype="int16",
                          device=device) as stream:
         stream.write(np.ascontiguousarray(audio))
+        _drain(stream)
+
+
+def _drain(stream) -> None:
+    """Wait for the sound the card is still holding.
+
+    Closing a stream does not empty it. Measured on the Pi, _play returned
+    0.13 seconds before a tone had finished coming out of the speaker, at
+    one and at three seconds alike — so it is the buffer, not a fraction.
+
+    That 0.13 seconds is when `speaking` gets cleared, which is when the
+    microphone starts listening again, which means the speaker heard the
+    tail of every single thing it said. Enough to catch the end of a word
+    and put it at the front of the next question.
+    """
+    import time
+
+    time.sleep(max(0.0, float(getattr(stream, "latency", 0.0) or 0.0)) + 0.05)
 
 
 # --- macOS -----------------------------------------------------------------
@@ -313,6 +331,7 @@ def _say_linux(text: str) -> None:
                 stream.write(gap)
             first = False
             stream.write(piece)
+        _drain(stream)
     worker.join(timeout=1.0)
 
 
