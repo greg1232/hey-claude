@@ -266,3 +266,59 @@ and `--dry` writes nothing at all.
 WAKE_LOG=off
 WAKE_LOG_CLIPS=400
 ```
+
+## Listening to it yourself
+
+```
+./label.sh
+```
+
+Fetches the clips off the Pi, opens a page in your browser, and plays them
+one at a time. **y** if that really was somebody saying the wake word, **n**
+if it wasn't, **space** to hear it again. Your answers go back to the Pi and
+are what the nightly retraining learns from — appended after the automatic
+ones, so they win.
+
+Nothing to install and nothing runs on the Pi: it copies the clips down,
+serves them from your laptop on a free port, and appends your answers when
+you stop.
+
+It leads with the firings the machine could not label by itself, because
+those are the ones it will be fitted on either way. Then near misses that
+somebody repeated seconds later, which are the recall failures and cannot
+be found any other way. Sixty at a time; `--all` for the lot.
+
+## Nightly retraining, and why it can refuse
+
+```
+./relearn.sh          learn from today, now
+./relearn.sh --dry    say what would change, change nothing
+./relearn.sh --log    what the timer did on its own last night
+```
+
+A user systemd timer runs the same thing at four in the morning —
+`Persistent=true`, so a Pi that was off does it when it next comes up
+rather than losing the day. It labels with the free signals only; a nightly
+job that needs the network and costs money is one that fails quietly for a
+month.
+
+**It only keeps the new model if the new model is better**, and this is not
+a formality. Comparing before and after on the examples just fitted says
+only that the fit converged — it said 100% and 0% the first night, and the
+room went on waking the speaker every twenty seconds. A model can memorise
+thirty-four clips of one evening's television and learn nothing whatever
+about television.
+
+So a fifth of the labelled firings are held back, the model is fitted
+without them, and both models are asked about those. The first honest
+measurement on this speaker:
+
+```
+on 67 firings held back from the fitting:
+  before  catches 93% of the real ones, and still fires on  0.0% of the mistakes
+  after   catches 85% of the real ones, and still fires on 42.9% of the mistakes
+```
+
+The retrained model would have been much worse, and the gate refused it.
+That is the number to watch, and the reason `./label.sh` exists: the
+automatic labels are good at the easy half and guess at the hard half.

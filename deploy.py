@@ -376,6 +376,53 @@ def setting(name: str, fallback: str) -> str:
     return fallback
 
 
+# Learning from the day, at four in the morning, when nobody is talking to
+# it and nothing else wants the processor. A user timer, so no root: the
+# same bargain as the speaker's own service.
+RELEARN_UNIT = """[Unit]
+Description=Teach the wake word from today's mistakes
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/{where}
+ExecStart=%h/{where}/.venv/bin/python train/relearn.py --nightly
+"""
+
+RELEARN_TIMER = """[Unit]
+Description=Teach the wake word from today's mistakes, nightly
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+# If the Pi was off at four, do it when it next comes up rather than
+# waiting a day. A week away from home shouldn't cost a week of learning.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+def install_nightly(pi: Pi) -> None:
+    """The timer that makes the loop a loop rather than a pipeline."""
+    for name, text in (("claude-relearn.service",
+                        RELEARN_UNIT.format(where=REMOTE_DIR)),
+                       ("claude-relearn.timer", RELEARN_TIMER)):
+        handle, path = tempfile.mkstemp()
+        try:
+            Path(path).write_text(text)
+            pi.send(Path(path), f"~/.config/systemd/user/{name}")
+        finally:
+            os.close(handle)
+            os.unlink(path)
+
+    pi.run("systemctl --user daemon-reload && "
+           "systemctl --user enable --now claude-relearn.timer", quiet=True)
+    when = pi.output("systemctl --user list-timers claude-relearn --no-pager "
+                     "| sed -n 2p").strip()
+    indent(when or "enabled")
+
+
 def copy_code(pi: Pi) -> None:
     pi.run(f"mkdir -p ~/{REMOTE_DIR}", quiet=True)
     # Plain flags only: macOS still ships rsync 2.6.9, which doesn't know
@@ -588,6 +635,10 @@ def main() -> int:
 
     step("Checking the sound hardware")
     check_sound(pi)
+
+    step("Setting the nightly retraining going")
+    pi.run("mkdir -p ~/.config/systemd/user", quiet=True)
+    install_nightly(pi)
 
     running_as_service = service_scope(pi) is not None
     if args.service:

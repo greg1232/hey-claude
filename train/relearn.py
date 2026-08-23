@@ -38,6 +38,13 @@ sys.path.insert(0, str(HERE.parent / "src"))
 import wake_log  # noqa: E402
 
 MODEL = HERE.parent / "models" / "hey_claude_whisper.npz"
+
+# Below this many labelled firings there is nothing to hold back, so the
+# new model is taken on trust — it can only be the bank plus a handful.
+LEAST_TO_JUDGE = 25
+# How much worse a new model may be and still be taken, since these are
+# small samples and being the same within noise is not a reason to refuse.
+SLACK = 0.05
 # What this machine learns for itself goes in state/, never in models/.
 # models/ is mirrored by deploy, so a model written there would be replaced
 # by the shipped one on the next deploy, taking every night of learning
@@ -77,8 +84,66 @@ def load_log():
     return np.array(X, dtype=np.float32), np.array(y), note
 
 
+def _worth_having(bank_X, bank_y, log_X, log_y, weight, old, say):
+    """Would the new model be better, on firings it has not been shown?
+
+    Comparing before and after on the very examples just fitted says only
+    that the fit converged. It said 100% and 0% the first night, and the
+    room went on waking the speaker every twenty seconds — because a model
+    can memorise thirty-four clips of one evening's television and learn
+    nothing about television.
+
+    So a fifth of the logged firings are held back, the model is fitted
+    without them, and both models are asked about them. That is the only
+    number here that can say no.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    import config
+    line = config.WAKE_THRESHOLD
+
+    if len(log_X) < LEAST_TO_JUDGE:
+        say(f"  only {len(log_X)} labelled — too few to judge, so taking it")
+        return True, float("nan")
+
+    rng = np.random.default_rng(0)
+    held = rng.random(len(log_X)) < 0.2
+    if not held.any() or held.all() or len(set(log_y[~held])) < 2:
+        return True, float("nan")
+
+    X = np.vstack([bank_X, log_X[~held]])
+    y = np.r_[bank_y, log_y[~held]]
+    w = np.r_[np.ones(len(bank_X)), np.full(int((~held).sum()), weight)]
+    scaler = StandardScaler().fit(X)
+    clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
+    clf.fit(scaler.transform(X), y, sample_weight=w)
+
+    real = log_y[held] == 1
+    scores = {
+        "before": _probability(log_X[held], old["mean"], old["scale"],
+                               old["coef"], float(old["intercept"])),
+        "after": _probability(log_X[held], scaler.mean_, scaler.scale_,
+                              clf.coef_[0], float(clf.intercept_[0])),
+    }
+    got = {}
+    say(f"  on {int(held.sum())} firings held back from the fitting:")
+    for name, p in scores.items():
+        caught = float((p[real] >= line).mean()) if real.any() else 1.0
+        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
+        got[name] = (caught, fired)
+        say(f"    {name:6s} catches {caught:5.0%} of the real ones, "
+            f"and still fires on {fired:5.1%} of the mistakes")
+
+    was, now = got["before"], got["after"]
+    # Room to move, because these are small samples and a model that is
+    # the same within noise is worth taking for the fresh data in it.
+    better = now[0] >= was[0] - SLACK and now[1] <= was[1] + SLACK
+    return better, now[0]
+
+
 def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
-          say=print) -> str:
+          say=print, only_if_better: bool = False) -> str:
     """Fit a new model from the bank plus the log. Returns one line to speak.
 
     Called both from the command line and from src/enroll.py, which does
@@ -120,31 +185,17 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     say(f"  fitted {len(X)} x {X.shape[1]} in "
         f"{time.monotonic() - began:.2f}s")
 
-    # Score the old model and the new one on the same logged firings — the
-    # only data that is unambiguously about this room. Anything the old one
-    # got wrong here is exactly what this exercise is for.
     old = np.load(running)
-    before = _probability(log_X, old["mean"], old["scale"],
-                          old["coef"], float(old["intercept"]))
-    after = _probability(log_X, scaler.mean_, scaler.scale_,
-                         clf.coef_[0], float(clf.intercept_[0]))
-
-    import config
-    line = config.WAKE_THRESHOLD
-    say("  on the firings this speaker actually logged:")
-    caught_after = 0.0
-    for name, p in (("before", before), ("after", after)):
-        real = log_y == 1
-        caught = float((p[real] >= line).mean()) if real.any() else float("nan")
-        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
-        say(f"    {name:6s} catches {caught:5.0%} of the real ones, "
-            f"and still fires on {fired:5.1%} of the mistakes")
-        if name == "after":
-            caught_after = caught
+    better, caught_after = _worth_having(
+        bank_X, bank_y, log_X, log_y, weight, old, say)
 
     if dry:
         say("  --dry, so nothing written.")
         return "Nothing written."
+
+    if only_if_better and not better:
+        say("  not an improvement — keeping the model that's running.")
+        return "I had a look and the one I have is still better."
 
     # Keep the one that is being replaced, so a bad night can be undone.
     LEARNED.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +216,46 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
             f"I now catch {caught_after:.0%} of the ones I have on file.")
 
 
+def nightly(say=print) -> int:
+    """Label whatever the day produced, refit, and keep it only if better.
+
+    Run by a systemd timer on the Pi at four in the morning. Everything it
+    needs is already on the machine: the vectors were computed when the
+    wake word fired, and the labels come from what happened next.
+
+    Labelling here never calls Claude. The free signals do most of the
+    work — a firing followed by silence is a mistake, one followed by a
+    question that got answered is real — and a nightly job that needs the
+    network and costs money is a nightly job that fails quietly for a
+    month.
+    """
+    import subprocess
+    import sys as _sys
+
+    say("Labelling what today produced...")
+    done = subprocess.run(
+        [_sys.executable, str(HERE / "label_wakes.py"), "--no-claude",
+         "--whisper", "tiny.en"],
+        capture_output=True, text=True)
+    for line in done.stdout.strip().splitlines()[-4:]:
+        say("  " + line)
+    if done.returncode != 0:
+        say("  labelling failed:\n" + done.stderr.strip()[-400:])
+
+    say("\nRefitting...")
+    said = refit(say=say, only_if_better=True)
+    say("\n" + said)
+
+    if "still better" in said or "Nothing" in said or "nothing" in said:
+        return 0
+
+    # Only worth restarting if something was actually written.
+    say("\nRestarting the speaker to pick it up...")
+    subprocess.run(["systemctl", "--user", "restart", "claude-speaker"],
+                   capture_output=True)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -176,9 +267,19 @@ def main() -> int:
                         help="how much one logged example counts against "
                              "one from the bank. Above 1 because the log is "
                              "this room, and the bank is everywhere")
+    parser.add_argument("--nightly", action="store_true",
+                        help="label, refit, keep only if better, restart. "
+                             "What the timer runs at four in the morning")
+    parser.add_argument("--only-if-better", action="store_true",
+                        help="keep the running model unless the new one "
+                             "wins on firings held back from the fitting")
     args = parser.parse_args()
 
-    print(refit(args.model, args.weight, args.dry))
+    if args.nightly:
+        return nightly()
+
+    print(refit(args.model, args.weight, args.dry,
+                only_if_better=args.only_if_better))
     if not args.dry:
         print("  restart the speaker to pick it up:  "
               "systemctl --user restart claude-speaker")

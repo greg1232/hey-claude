@@ -113,6 +113,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh` runs it) |
 | `wishes.py` | Reads the wishes off the Pi (`./wishes.sh` runs it) |
+| `label.py` | Listen to what woke it and say if it was right (`./label.sh`) |
+| `relearn.py` | Make it learn from today, now (`./relearn.sh` runs it) |
 
 Only `brain.py`, `weather.py`, `effects.py`, `books.py` and `music.py` use
 the internet. The microphone, the wake word, the speech recognition and the
