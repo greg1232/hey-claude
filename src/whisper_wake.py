@@ -76,6 +76,16 @@ class WhisperWakeDetector:
         phrase = model_path.stem.split("_whisper")[0].split("-")[0]
         self.label = f"say '{phrase.replace('_', ' ')}'"
 
+        # Models fitted by train/relearn.py carry the commit of the data
+        # they were fitted on. Saying so at startup is the difference
+        # between "the wake word got worse last week" being answerable and
+        # not.
+        came_from = weights.files
+        if "dataset" in came_from and str(weights["dataset"]):
+            print(f"  fitted {str(weights.get('fitted_at', ''))[:16]} on "
+                  f"{int(weights.get('examples', 0))} logged examples, "
+                  f"dataset {str(weights['dataset'])[:8]}")
+
     def _read(self):
         weights = np.load(self._path)
         self._mean = weights["mean"]

@@ -107,6 +107,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/train_whisper_wake.py` | Trains the wake word |
 | `train/label_wakes.py` | Decides which logged firings were real |
 | `train/relearn.py` | Retrains on them, in about a second |
+| `train/archive.py` | Commits the data, and stamps the model with it |
 | `train/test_wake.py` | Checks it hears you |
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
@@ -115,7 +116,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `wishes.py` | Reads the wishes off the Pi (`./wishes.sh` runs it) |
 | `label.py` | Listen to what woke it and say if it was right (`./label.sh`) |
 | `relearn.py` | Make it learn from today, now (`./relearn.sh` runs it) |
-| `backup.py` | Copies what it has learned off the Pi (`./backup.sh`) |
+
 
 Only `brain.py`, `weather.py`, `effects.py`, `books.py` and `music.py` use
 the internet. The microphone, the wake word, the speech recognition and the

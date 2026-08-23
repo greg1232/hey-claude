@@ -28,6 +28,7 @@ Label the log first:
 
 import argparse
 import contextlib
+from datetime import datetime
 import fcntl
 import sys
 from pathlib import Path
@@ -188,6 +189,12 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     say(f"  fitted {len(X)} x {X.shape[1]} in "
         f"{time.monotonic() - began:.2f}s")
 
+    # Commit the data before fitting, so the sha names exactly what this
+    # model is about to be trained on — not whatever the log looked like
+    # by the time the fitting finished.
+    import archive
+    dataset = archive.snapshot(say)
+
     old = np.load(running)
     better, caught_after = _worth_having(
         bank_X, bank_y, log_X, log_y, weight, old, say)
@@ -213,8 +220,15 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
              intercept=np.float32(clf.intercept_[0]),
              whisper_model=str(old["whisper_model"]),
              window_seconds=np.float32(old["window_seconds"]),
-             keep_frames=np.int32(old["keep_frames"]))
+             keep_frames=np.int32(old["keep_frames"]),
+             # Which version of the data this came from, so the model can
+             # always answer what it was trained on.
+             dataset=dataset,
+             fitted_at=datetime.now().astimezone().isoformat(
+                 timespec="seconds"),
+             examples=np.int32(len(log_X)))
     say(f"  wrote {LEARNED}")
+    archive.keep_model(LEARNED, dataset, {"recall": caught_after}, say)
     return (f"Learned from {len(log_X)} examples. "
             f"I now catch {caught_after:.0%} of the ones I have on file.")
 

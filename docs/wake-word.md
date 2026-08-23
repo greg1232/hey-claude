@@ -341,40 +341,53 @@ automatic labels are good at the easy half and guess at the hard half.
 
 ## Where the data lives
 
+One dataset version per model, and the model says which one.
+
 ```
-./backup.sh              copy it off the Pi and keep every version
-./backup.sh --local      copy it down, upload nothing
-./backup.sh --dry        say what would happen
+data committed   ->  model fitted   ->  uploaded as
+                     carrying that      models/2026-08-23-a1b2c3d4.npz
+                     commit's sha
 ```
 
-Everything the speaker learns for itself lives in `state/` on the Pi,
-which git ignores: every firing with the 768 numbers it was scored on, the
-recordings behind them, the labels, and the model fitted from all of it.
-An SD card in an always-on Pi is not a place to keep the only copy of
-anything, and the recordings are on a rotating cap of four hundred, so the
-audio behind labels already given is being deleted to make room.
+There is no backup button; `train/relearn.py` does it every time it
+retrains. The data is committed *before* the fitting, so the sha names
+exactly what the model was trained on rather than whatever the log looked
+like once fitting finished. The sha goes inside the `.npz` as `dataset`,
+and the speaker prints it at startup:
 
-`backup.sh` copies it down and pushes it to a Hugging Face dataset repo,
-which is a git repository with large-file storage behind it — so each
-backup is a commit, and you can go back to the data a particular model was
-fitted on rather than guessing. It writes a `metadata.csv` so the whole
-thing is browsable in a page, one row per firing lined up with its
-recording.
+```
+Loading the wake word from hey_claude_whisper.npz (whisper tiny.en)
+  fitted 2026-08-23T19:20 on 1196 logged examples, dataset a1b2c3d4
+```
 
-**It creates the repository private**, and `--public` is a thing you have
-to type. This is not the same as the recordings in `train/real/`, which
-are four people who sat down and said "hey Claude" on purpose. This is two
-second windows of a living room caught whenever the detector fired — dozens
-an hour with a television on — containing whatever was being said by
-whoever was in the room. Nobody chose to record most of it.
+That is the difference between "the wake word got worse last week" being
+answerable and not.
 
-First backup:
+It goes to a Hugging Face dataset repo, which is a git repository with
+large-file storage behind it — so every retraining is a commit, and you can
+go back to exactly the data behind a particular model. A `metadata.csv`
+goes with it, one row per firing lined up with its recording, so the whole
+thing is browsable in a page.
+
+This also fixes something quietly wrong: the Pi keeps only the most recent
+few hundred recordings, so the audio behind labels already given was being
+deleted to make room. Archived, they are all kept.
+
+**Private, and nothing here can make it public.** The recordings in
+`train/real/` are four people who sat down and said "hey Claude" on
+purpose. This is two second windows of a living room caught whenever the
+detector fired — dozens an hour with a television on — containing whatever
+was being said by whoever was in the room. Nobody chose to record most of
+it.
+
+Needs `HF_TOKEN` in `.env`, from
+[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). A
+fine-grained token with write access to that one repository is enough, and
+is what to use — this is a token sitting on a device in a living room.
+Without it, retraining still works and simply says nothing is archived.
+
+First archive:
 
 ```
 848 firings, 1304 near misses, 1826 labelled, 143 by a person, 400 with audio
-32 MB
 ```
-
-What is worth keeping is `wakes/` and `enrolled/`. The books and sound
-effects caches are downloaded copies of other people's files and can
-always be fetched again.

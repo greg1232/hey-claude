@@ -190,6 +190,15 @@ SOUND_HOURS = float(_get("SOUND_HOURS", "8"))
 FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 
 
+# --- Keeping what it learns ---
+# A Hugging Face token, so each retraining can commit the data it used and
+# stamp the model with that commit. Without one, retraining still works and
+# nothing is archived. https://huggingface.co/settings/tokens — a
+# fine-grained token with write access to the one dataset repository is
+# enough.
+HF_TOKEN = _get("HF_TOKEN", "")
+
+
 # --- Spotify ---
 # Playing music needs a Spotify Premium account: librespot, which does the
 # streaming on the Pi, cannot play at all on a free one.

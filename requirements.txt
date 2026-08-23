@@ -47,3 +47,6 @@ pyusb
 
 # Decodes the ogg, mp3 and flac that sound-effect libraries hand back.
 soundfile
+
+# Archives the wake-word data and ties each model to the version it used.
+huggingface_hub
