@@ -80,9 +80,29 @@ def main() -> int:
         print("  Every attempt worked. Leave the threshold alone.")
         return 0
 
-    # A threshold has to sit below the worst attempt to catch them all, with
-    # a little room, since the next attempt won't score exactly like these.
+    # A threshold has to sit below the worst attempt to catch them all,
+    # with a little room, since the next attempt won't score exactly like
+    # these.
     suggested = max(0.05, round(scores.min() * 0.7, 2))
+
+    # Below about a third, nothing sensible is being suggested: a model
+    # that scores 0.05 on someone saying the wake word into the microphone
+    # hasn't half-heard them, it hasn't heard them at all. Recommending a
+    # threshold there would trade every miss for a room full of false
+    # wakes. The usual cause is much simpler — nobody actually spoke, or
+    # not into this microphone.
+    if suggested < 0.3:
+        print(f"\n  These scores are too low to fix with a threshold. At "
+              f"{suggested} it would\n  wake on almost anything.")
+        print("  Either the wake word wasn't spoken during the prompts, or "
+              "this model\n  has never heard a voice like yours. Check the "
+              "levels above: under 200\n  means the microphone heard "
+              "nothing.")
+        print("\n  If it really can't hear you, record yourself and retrain:")
+        print("      python train/record_wake.py --speaker you --times 20")
+        print("      python train/train_whisper_wake.py")
+        return 1
+
     print(f"\n  To catch all {len(scores)}, WAKE_THRESHOLD needs to be about "
           f"{suggested} or lower.")
     print("  Check that against a quiet room before trusting it:")

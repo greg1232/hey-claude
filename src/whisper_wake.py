@@ -47,10 +47,19 @@ class WhisperWakeDetector:
               f"(whisper {whisper_model})...")
         from faster_whisper import WhisperModel
 
-        # One thread. The wake word runs forever in the background and
-        # shouldn't take the whole machine from Whisper and the voice, which
-        # need it in bursts. Measured on a Pi 4: 131 ms a window on one
-        # thread, 85 ms on four — not worth three extra cores.
+        # This is a second copy of the same model stt.py loads, and that is
+        # deliberate. Sharing one would save 56 MB and 0.8 seconds of
+        # startup, and cost far more than it saves, because the two uses
+        # want opposite settings. Measured on a Pi 4:
+        #
+        #   two models, as now      0.33 cores idle, 1.72s a question
+        #   shared at four threads  0.85 cores idle, 1.72s a question
+        #   shared at one thread    0.33 cores idle, 4.38s a question
+        #
+        # One thread here: the wake word runs forever and should be frugal,
+        # leaving the other cores for transcription and the voice, which
+        # need them in bursts. Four threads would take a window from 131 ms
+        # to 85 ms while spending 2.6 times the CPU to do it.
         self._whisper = WhisperModel(whisper_model, device="cpu",
                                      compute_type="int8", cpu_threads=1)
         self._features = self._whisper.feature_extractor
