@@ -35,11 +35,8 @@ class WhisperWakeDetector:
     """Wake up when the wake word is heard, using Whisper's encoder."""
 
     def __init__(self, model_path: Path) -> None:
-        weights = np.load(model_path)
-        self._mean = weights["mean"]
-        self._scale = weights["scale"]
-        self._coef = weights["coef"]
-        self._intercept = float(weights["intercept"])
+        self._path = model_path
+        weights = self._read()
         self._keep = int(weights["keep_frames"])
         self._window = float(weights["window_seconds"])
         whisper_model = str(weights["whisper_model"])
@@ -78,6 +75,25 @@ class WhisperWakeDetector:
 
         phrase = model_path.stem.split("_whisper")[0].split("-")[0]
         self.label = f"say '{phrase.replace('_', ' ')}'"
+
+    def _read(self):
+        weights = np.load(self._path)
+        self._mean = weights["mean"]
+        self._scale = weights["scale"]
+        self._coef = weights["coef"]
+        self._intercept = float(weights["intercept"])
+        return weights
+
+    def reload(self) -> None:
+        """Pick up a newly trained head, without reloading Whisper.
+
+        The encoder is 56 MB and several seconds to load, and retraining
+        never touches it — only the four small arrays in front of it change.
+        So learning a voice can take effect while the person is still
+        standing there, instead of at the next restart.
+        """
+        self._read()
+        print(f"  reloaded {self._path.name}")
 
     def score(self, audio: np.ndarray) -> float:
         """How much the last two seconds sound like the wake word."""

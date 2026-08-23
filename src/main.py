@@ -17,6 +17,7 @@ import sys
 import audio_in
 import brain
 import config
+import enroll
 import lights
 import sounds
 import stt
@@ -131,6 +132,14 @@ def run_voice_mode() -> None:
                     print(f"Claude: {answer}\n")
                     lights.show("speaking")
                     tts.speak(answer)
+
+                    # "Learn my voice" arms a recording rather than doing
+                    # it inside the tool call, because the tool runs before
+                    # the answer is spoken — and the speaker has to finish
+                    # saying "off you go" before it can listen to them go.
+                    if enroll.armed():
+                        lights.show("listening")
+                        enroll.run(mic, waker, tts.speak)
                 finally:
                     lights.show("idle")
 

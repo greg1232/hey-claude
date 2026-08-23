@@ -4,24 +4,32 @@ The speaker writes down every firing (src/wake_log.py). This turns that pile
 into labelled training data, using three things in order of how much they
 cost:
 
-  1. What Whisper makes of the two seconds that fired.
-     This is the strongest single signal and it is nearly free — the wake
-     window is two seconds and the model is already on the machine. If it
-     transcribes to something like "hey Claude", it was real. If it
-     transcribes to "and back to you Bob", it wasn't. The wake word itself
-     can't do this: it decides in 159 ms on a window with no context,
-     against a full decoder run with a language model behind it.
-
-  2. What happened next.
+  1. What happened next.
      Nobody said anything -> almost certainly a mistake. A question that
      got answered -> almost certainly real. The speaker works both of
-     these out anyway in the course of answering, and they are already in
-     the log.
+     these out anyway in the course of answering, so this is free and it
+     is the most reliable thing here.
 
-  3. Claude, for the ones still in doubt.
-     Given the two transcripts, the time of day and the score, in batches
-     of twenty. This is the only part that costs money, and after the first
-     two steps there usually isn't much left for it to do.
+     For a near miss, the equivalent is repetition: one that was followed
+     within seconds by a real firing is somebody saying it again because
+     the first go was missed. That is a labelled recall failure and nobody
+     had to label it.
+
+  2. What Whisper makes of the two seconds that fired — but only in one
+     direction. Measured against 80 real recordings, tiny.en transcribes
+     the wake word 5% of the time and base.en 16%. It hears "It's hot",
+     "Take that", "Great class" — the right rhythm and roughly the right
+     vowels, overruled by a language model for which "Claude" is rare and
+     "take that" is common.
+
+     So a window that does say Claude is strong evidence it was real, and
+     a window that doesn't is no evidence at all. What the transcript is
+     good for is the opposite case: Whisper handles ordinary English
+     perfectly well, so a window that comes out as a fluent sentence of
+     television is evidence the speaker was not being spoken to.
+
+  3. Claude, for the ones still in doubt, told plainly how unreliable the
+     window transcript is so it doesn't make the same mistake.
 
 Nothing is thrown away and nothing is overwritten: labels are appended to
 the same log, so a bad run can be relabelled and the audio is still there
@@ -93,25 +101,45 @@ def transcribe_windows(firings: list[dict], size: str) -> None:
 
 
 def label_locally(firing: dict) -> tuple[int | None, str]:
-    """Label from evidence already on the machine. None means ask Claude."""
+    """Label from evidence already on the machine. None means ask Claude.
+
+    Ordered by how much the evidence is worth, which is not the order it
+    was in the first time: the window transcript looked like the strongest
+    signal and is in fact the weakest, because Whisper only writes down
+    "Claude" for one real wake word in six.
+    """
     window = (firing.get("window") or "").strip()
     heard = (firing.get("heard") or "").strip()
 
-    if window and SOUNDS_RIGHT.search(window):
-        return 1, "the window says Claude"
+    # A near miss is a window that didn't fire. There is no question after
+    # it to go on, so the evidence is different.
+    if firing.get("near"):
+        if firing.get("repeated"):
+            # Followed within seconds by a real wake word. Somebody said it,
+            # nothing happened, and they said it again — so this was the
+            # wake word and the detector missed it. The person repeating
+            # themselves is the label.
+            return 1, "said again seconds later, so this one was missed"
+        if window and SOUNDS_RIGHT.search(window):
+            return 1, "the window says Claude"
+        return None, ""
 
-    # Somebody spoke a real question straight after, and Claude answered it.
-    # Even if Whisper missed the wake word in the window, a person was
-    # plainly talking to the speaker.
+    # Somebody spoke a real question and Claude answered it. This is the
+    # strongest thing in the log and it costs nothing — the speaker worked
+    # it out while answering.
     if firing.get("answered") and len(heard.split()) >= 3:
         return 1, "a real question followed"
 
-    # Nothing at all afterwards, and nothing like the word in the window.
-    # This is what almost every television mistake looks like.
-    if not heard and window and not SOUNDS_RIGHT.search(window):
-        return 0, "no wake word, and nobody said anything"
-    if not heard and not window:
-        return 0, "silence either side"
+    # Rare, because Whisper mostly can't spell it, but precise when it hits.
+    if window and SOUNDS_RIGHT.search(window):
+        return 1, "the window says Claude"
+
+    # Nobody said anything afterwards. This is what almost every television
+    # mistake looks like, and the window transcript is not why: a window
+    # that doesn't say Claude tells us nothing, so this rests entirely on
+    # the silence that followed.
+    if not heard:
+        return 0, "nobody said anything after it fired"
 
     return None, ""
 
@@ -130,9 +158,12 @@ def ask_claude(unsure: list[dict]) -> None:
         batch = unsure[start:start + BATCH]
         listing = "\n".join(
             f"{f['n']}. at {f.get('at', '?')[11:16]}, score {f.get('score')}, "
-            f"the two seconds that fired sounded like "
-            f"{(f.get('window') or '')!r}, and what came next was "
-            f"{(f.get('heard') or '')!r}"
+            + ("this one did NOT fire (it scored below the line), so there "
+               "is no question after it; "
+               if f.get("near") else "")
+            + f"the two seconds sounded like {(f.get('window') or '')!r}"
+            + ("" if f.get("near")
+               else f", and what came next was {(f.get('heard') or '')!r}")
             for f in batch)
 
         message = client.messages.create(
@@ -145,11 +176,26 @@ def ask_claude(unsure: list[dict]) -> None:
                 "For each numbered firing, decide whether somebody really "
                 "said the wake word to the speaker, or whether it fired by "
                 "mistake on the television or on ordinary conversation.\n\n"
-                "The transcripts come from a small speech model and are "
-                "often wrong. \"hey Claude\" comes out as \"a cloud\", "
-                "\"hey clod\", \"Hey, Claude.\" — judge it by sound, not "
-                "spelling. Television gives you fragments of broadcast "
-                "speech addressed to nobody in the room.\n\n"
+                "Read the two pieces of evidence very differently.\n\n"
+                "What came NEXT is reliable. A real question, especially "
+                "one addressed to an assistant, means somebody was talking "
+                "to the speaker. Nothing at all usually means it fired on "
+                "the television.\n\n"
+                "The transcript of the two seconds that FIRED is close to "
+                "worthless as evidence against. It comes from a tiny speech "
+                "model that, measured on eighty real recordings, writes "
+                "down the wake word only about one time in six: it hears "
+                "\"It's hot\", \"Take that\", \"Great class\", \"Thank God\" "
+                "— right rhythm, right vowels, wrong word, because "
+                "\"Claude\" is rare and those phrases are common. So if it "
+                "does say something like Claude, that is strong evidence "
+                "the firing was real. If it does not, that is almost no "
+                "evidence either way, and you must not treat it as a "
+                "reason to say no.\n\n"
+                "Where the window transcript IS useful is when it reads as "
+                "a fluent, complete sentence of broadcast or overheard "
+                "speech. That model handles ordinary English well, so that "
+                "really is what was in the room.\n\n"
                 "Answer with one JSON array and nothing else: "
                 '[{"n": 12, "real": true, "why": "short reason"}, ...]. '
                 "Include every number. If you genuinely cannot tell, leave "

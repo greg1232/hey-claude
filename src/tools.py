@@ -49,7 +49,7 @@ import sys
 
 # Every module that owns tools. Importing them is what registers what they
 # can do, so this list is the only place a new capability has to appear.
-FEATURES = ("timers", "weather", "sounds", "search")
+FEATURES = ("timers", "weather", "sounds", "search", "enroll")
 
 _REGISTRY: dict[str, "Tool"] = {}
 _SERVER: list = []

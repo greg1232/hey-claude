@@ -196,6 +196,25 @@ def outcome(number: int, heard: str, answered: bool) -> None:
         print(f"[wake log] {type(error).__name__}: {error}")
 
 
+def teach(vector, audio, label: int, why: str) -> None:
+    """Add an example that was never a firing — somebody taught it directly.
+
+    Enrolment goes through here rather than straight into the trainer, so
+    it lands in the same pile as everything else and relearn.py needs to
+    know nothing about where an example came from.
+    """
+    if not config.WAKE_LOG:
+        return
+    try:
+        number = _write(vector, audio, 1.0 if label else 0.0)
+        with _lock, open(INDEX, "a") as handle:
+            handle.write(json.dumps({
+                "n": number, "label": int(label), "why": why,
+                "taught": True}) + "\n")
+    except Exception as error:
+        print(f"[wake log] {type(error).__name__}: {error}")
+
+
 def read() -> list[dict]:
     """Every firing, with its outcome folded in and its row number."""
     if not INDEX.exists():

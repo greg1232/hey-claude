@@ -72,6 +72,89 @@ def load_log():
     return np.array(X, dtype=np.float32), np.array(y), note
 
 
+def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
+          say=print) -> str:
+    """Fit a new model from the bank plus the log. Returns one line to speak.
+
+    Called both from the command line and from src/enroll.py, which does
+    this live while somebody stands there — so it prints its working
+    through `say` and hands back a sentence rather than a report.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    bank_X, bank_y, who = load_bank(model.with_suffix(".bank.npz"))
+    log_X, log_y, _note = load_log()
+
+    say(f"  bank: {len(bank_X)} features "
+          f"({int((bank_y == 1).sum())} wake word, "
+          f"{int((bank_y == 0).sum())} not)")
+    say(f"  log:  {len(log_X)} labelled firings "
+          f"({int((log_y == 1).sum())} real, "
+          f"{int((log_y == 0).sum())} mistakes)")
+
+    if not len(log_X):
+        return "There's nothing labelled to learn from yet."
+
+    X = np.vstack([bank_X, log_X])
+    y = np.r_[bank_y, log_y]
+    # Every logged example is from this room, this microphone, these
+    # voices, and this television. The bank is a general model of the
+    # world; the log is the actual problem. Counting the log for more is
+    # the whole reason this is worth doing.
+    weights = np.r_[np.ones(len(bank_X)), np.full(len(log_X), weight)]
+
+    import time
+    began = time.monotonic()
+    scaler = StandardScaler().fit(X)
+    clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
+    clf.fit(scaler.transform(X), y, sample_weight=weights)
+    say(f"  fitted {len(X)} x {X.shape[1]} in "
+        f"{time.monotonic() - began:.2f}s")
+
+    # Score the old model and the new one on the same logged firings — the
+    # only data that is unambiguously about this room. Anything the old one
+    # got wrong here is exactly what this exercise is for.
+    old = np.load(model)
+    before = _probability(log_X, old["mean"], old["scale"],
+                          old["coef"], float(old["intercept"]))
+    after = _probability(log_X, scaler.mean_, scaler.scale_,
+                         clf.coef_[0], float(clf.intercept_[0]))
+
+    import config
+    line = config.WAKE_THRESHOLD
+    say("  on the firings this speaker actually logged:")
+    caught_after = 0.0
+    for name, p in (("before", before), ("after", after)):
+        real = log_y == 1
+        caught = float((p[real] >= line).mean()) if real.any() else float("nan")
+        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
+        say(f"    {name:6s} catches {caught:5.0%} of the real ones, "
+            f"and still fires on {fired:5.1%} of the mistakes")
+        if name == "after":
+            caught_after = caught
+
+    if dry:
+        say("  --dry, so nothing written.")
+        return "Nothing written."
+
+    # Keep the one that is being replaced, so a bad night can be undone.
+    backup = model.with_suffix(".npz.previous")
+    backup.write_bytes(model.read_bytes())
+
+    np.savez(model,
+             mean=scaler.mean_.astype(np.float32),
+             scale=scaler.scale_.astype(np.float32),
+             coef=clf.coef_[0].astype(np.float32),
+             intercept=np.float32(clf.intercept_[0]),
+             whisper_model=str(old["whisper_model"]),
+             window_seconds=np.float32(old["window_seconds"]),
+             keep_frames=np.int32(old["keep_frames"]))
+    say(f"  wrote {model.name}, kept the old one as {backup.name}")
+    return (f"Learned from {len(log_X)} examples. "
+            f"I now catch {caught_after:.0%} of the ones I have on file.")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -85,75 +168,10 @@ def main() -> int:
                              "this room, and the bank is everywhere")
     args = parser.parse_args()
 
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-
-    bank_X, bank_y, who = load_bank(args.model.with_suffix(".bank.npz"))
-    log_X, log_y, _note = load_log()
-
-    print(f"  bank: {len(bank_X)} features "
-          f"({int((bank_y == 1).sum())} wake word, "
-          f"{int((bank_y == 0).sum())} not)")
-    print(f"  log:  {len(log_X)} labelled firings "
-          f"({int((log_y == 1).sum())} real, "
-          f"{int((log_y == 0).sum())} mistakes)")
-
-    if not len(log_X):
-        raise SystemExit(
-            "Nothing labelled in the log yet — run train/label_wakes.py.")
-
-    X = np.vstack([bank_X, log_X])
-    y = np.r_[bank_y, log_y]
-    # Every logged example is from this room, this microphone, these
-    # voices, and this television. The bank is a general model of the
-    # world; the log is the actual problem. Counting the log for more is
-    # the whole reason this is worth doing.
-    weight = np.r_[np.ones(len(bank_X)), np.full(len(log_X), args.weight)]
-
-    import time
-    began = time.monotonic()
-    scaler = StandardScaler().fit(X)
-    clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
-    clf.fit(scaler.transform(X), y, sample_weight=weight)
-    print(f"\n  fitted {len(X)} x {X.shape[1]} in "
-          f"{time.monotonic() - began:.2f}s")
-
-    # Score the old model and the new one on the same logged firings — the
-    # only data that is unambiguously about this room. Anything the old one
-    # got wrong here is exactly what this exercise is for.
-    old = np.load(args.model)
-    before = _probability(log_X, old["mean"], old["scale"],
-                          old["coef"], float(old["intercept"]))
-    after = _probability(log_X, scaler.mean_, scaler.scale_,
-                         clf.coef_[0], float(clf.intercept_[0]))
-
-    print("\n  on the firings this speaker actually logged:")
-    for name, p in (("before", before), ("after", after)):
-        real = log_y == 1
-        caught = float((p[real] >= 0.99).mean()) if real.any() else float("nan")
-        fired = float((p[~real] >= 0.99).mean()) if (~real).any() else 0.0
-        print(f"    {name:6s} catches {caught:5.0%} of the real ones, "
-              f"and still fires on {fired:5.1%} of the mistakes")
-
-    if args.dry:
-        print("\n  --dry, so nothing written.")
-        return 0
-
-    # Keep the one that is being replaced, so a bad night can be undone.
-    backup = args.model.with_suffix(".npz.previous")
-    backup.write_bytes(args.model.read_bytes())
-
-    np.savez(args.model,
-             mean=scaler.mean_.astype(np.float32),
-             scale=scaler.scale_.astype(np.float32),
-             coef=clf.coef_[0].astype(np.float32),
-             intercept=np.float32(clf.intercept_[0]),
-             whisper_model=str(old["whisper_model"]),
-             window_seconds=np.float32(old["window_seconds"]),
-             keep_frames=np.int32(old["keep_frames"]))
-    print(f"\n  wrote {args.model.name}, kept the old one as {backup.name}")
-    print("  restart the speaker to pick it up:  "
-          "systemctl --user restart claude-speaker")
+    print(refit(args.model, args.weight, args.dry))
+    if not args.dry:
+        print("  restart the speaker to pick it up:  "
+              "systemctl --user restart claude-speaker")
     return 0
 
 

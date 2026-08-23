@@ -10,6 +10,7 @@ still listening, and it can't say anything at all while you're talking.
     blue, slow  thinking about it
     green       talking back
     red, fast   a timer is going off
+    purple      learning your voice — keep saying it until this goes out
 
 Everything here is best-effort. If the array isn't plugged in, or pyusb
 isn't installed, or the udev rule was never added, the lights quietly stay
@@ -58,6 +59,10 @@ STATES = {
     "thinking":  (BREATHE, 0x0066FF, 3),  # same colour, so it reads as one
     "speaking":  (SOLID, 0x00CC44, 0),    # green — my turn
     "ringing":   (BREATHE, 0xFF0000, 9),  # red, fast, unmissable
+    # Learning a voice. A colour used for nothing else, because while this
+    # is on it is the only instruction the person has: keep saying it until
+    # the light goes out.
+    "learning":  (SOLID, 0xAA00FF, 0),
 }
 
 _lock = threading.Lock()
@@ -141,7 +146,8 @@ if __name__ == "__main__":
         show("idle")
         raise SystemExit
 
-    for name in ("listening", "thinking", "speaking", "ringing", "idle"):
+    for name in ("listening", "thinking", "speaking", "ringing",
+                 "learning", "idle"):
         print(f"  {name}")
         show(name)
         time.sleep(2.5)
