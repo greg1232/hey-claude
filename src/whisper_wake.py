@@ -66,6 +66,14 @@ class WhisperWakeDetector:
         self._samples = int(self._window * config.SAMPLE_RATE)
         self._buffer = np.zeros(self._samples, dtype=np.int16)
         self._next_look = 0.0
+        # The last window scored, and the 768 numbers it was scored on.
+        # Kept because whatever fires the wake word is exactly the example
+        # worth learning from, and by the time it fires the expensive part
+        # is already paid for — an encoder pass is 159 ms on a Pi, and this
+        # is that pass's output. See wake_log.py.
+        self.last_vector: np.ndarray | None = None
+        self.last_audio: np.ndarray | None = None
+        self.last_score = 0.0
 
         phrase = model_path.stem.split("_whisper")[0].split("-")[0]
         self.label = f"say '{phrase.replace('_', ' ')}'"
@@ -77,8 +85,11 @@ class WhisperWakeDetector:
         encoded = np.array(self._whisper.encode(mel))[0][:self._keep]
         vector = np.concatenate([encoded.mean(0), encoded.max(0)])
         standardised = (vector - self._mean) / self._scale
-        return float(1.0 / (1.0 + np.exp(-(standardised @ self._coef
-                                           + self._intercept))))
+        self.last_vector = vector
+        self.last_audio = audio
+        self.last_score = float(1.0 / (1.0 + np.exp(
+            -(standardised @ self._coef + self._intercept))))
+        return self.last_score
 
     def push(self, chunk: np.ndarray) -> None:
         """Add audio to the rolling window, oldest falling off the front."""
@@ -114,7 +125,10 @@ class WhisperWakeDetector:
                 continue
             score = self.observe(chunk)
             if score is not None and score >= config.WAKE_THRESHOLD:
+                # Hold on to what fired before reset() wipes the buffer.
+                fired_on = (self.last_vector, self.last_audio, score)
                 self.reset()
+                self.last_vector, self.last_audio, self.last_score = fired_on
                 return True
 
 

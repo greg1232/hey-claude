@@ -90,6 +90,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/lights.py` | The LED ring on the array, showing what it's doing |
 | `src/sounds.py` | Rain, ocean, a fire — made as they play |
 | `src/search.py` | Web search, which runs on Anthropic's side |
+| `src/wake_log.py` | Writes down every wake-word firing, to learn from |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
@@ -97,6 +98,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/record_wake.py` | Records people saying the wake word |
 | `train/record_room.py` | Records the room not saying it |
 | `train/train_whisper_wake.py` | Trains the wake word |
+| `train/label_wakes.py` | Decides which logged firings were real |
+| `train/relearn.py` | Retrains on them, in about a second |
 | `train/test_wake.py` | Checks it hears you |
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
 | `deploy.py` | Puts the whole thing on a Raspberry Pi (`./deploy.sh` runs it) |
@@ -526,6 +529,61 @@ thread ahead      4.13s
 
 ```
 SENTENCE_PAUSE=0.12
+```
+
+## Learning from its own mistakes
+
+The wake word is wrong about forty times an hour with a television on, and
+every one of those is a labelled training example nobody had to record. The
+speaker keeps them.
+
+```
+python src/wake_log.py         what has fired, and how those turns went
+python train/label_wakes.py    decide which were real
+python train/relearn.py        fit a new model on them
+```
+
+**The vector is free.** When the wake word fires, the detector has just
+turned two seconds of audio into 768 numbers — that encoder pass is 159 ms
+on a Pi and is the entire cost of the wake word. Those numbers are what
+retraining needs, so they are written down (1.5 kB) along with the audio
+(64 kB, most recent 400 only, because this is an SD card).
+
+**The label is nearly free too.** A firing followed by silence is almost
+certainly a mistake; one followed by a question that got answered is almost
+certainly real. The speaker works both of those out anyway while answering.
+
+**The judge is better than the thing being judged.** `label_wakes.py`
+transcribes the two seconds that fired with a *bigger* Whisper than the Pi
+listens with — `small.en` against `tiny.en`, beam 5 against beam 1 — on a
+laptop, with nothing waiting on it. If the window transcribes to something
+that sounds like "hey Claude", it was real. Only what's left over goes to
+Claude, in batches of twenty, with both transcripts and the time of day.
+
+Claude cannot listen to the clip itself. The API takes text, images and
+PDFs and rejects audio outright — tested, not assumed — so a transcript is
+the way in, which is why it's worth making a good one.
+
+**Retraining costs a second.** Not twenty minutes, because it never touches
+audio: it joins the feature bank `train_whisper_wake.py` saved with the
+logged vectors and fits. Measured on a Pi 4:
+
+```
+logistic regression, 30,000 x 768   0.67s
+the same features from audio        159ms each, about 20 minutes
+```
+
+So the whole loop can run on the Pi, overnight, on data the Pi collected.
+Logged examples are weighted above bank ones (`--weight 3`) because the
+bank is a general model of the world and the log is the actual room.
+
+`relearn.py` prints how the old and new models score on the logged firings
+before writing anything, keeps the model it replaced as `.npz.previous`,
+and `--dry` writes nothing at all.
+
+```
+WAKE_LOG=off
+WAKE_LOG_CLIPS=400
 ```
 
 ## When something goes wrong

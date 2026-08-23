@@ -20,6 +20,7 @@ import config
 import lights
 import sounds
 import stt
+import wake_log
 import timers
 import tts
 import wake
@@ -81,6 +82,13 @@ def run_voice_mode() -> None:
                 # listening to you, which is the one thing it must not do
                 # by mistake.
                 try:
+                    # Write down what fired, before anything else touches
+                    # the detector. Whatever woke the speaker is exactly
+                    # the example worth learning from, and the expensive
+                    # part of making it is already paid for.
+                    firing = wake_log.note(waker, getattr(
+                        waker, "last_score", config.WAKE_THRESHOLD))
+
                     # 2. Beep, and light the ring blue, so the person knows
                     # it's listening. The ring is the half that keeps saying
                     # so while they're actually talking.
@@ -103,6 +111,7 @@ def run_voice_mode() -> None:
                         # what almost all of those look like — so say nothing
                         # rather than announcing the mistake to an empty room.
                         print("(woke up, but nobody was talking)")
+                        wake_log.outcome(firing, "", False)
                         continue
                     print(f"You: {question}")
 
@@ -112,7 +121,9 @@ def run_voice_mode() -> None:
                         # Somebody was talking, but not to us — the television
                         # again. Claude spotted it; see brain.SILENCE.
                         print(f"(not for me: {question!r})")
+                        wake_log.outcome(firing, question, False)
                         continue
+                    wake_log.outcome(firing, question, True)
                     print(f"Claude: {answer}\n")
                     lights.show("speaking")
                     tts.speak(answer)

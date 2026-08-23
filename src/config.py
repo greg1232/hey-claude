@@ -133,6 +133,15 @@ WAKE_THRESHOLD = float(_get("WAKE_THRESHOLD", "0.5"))
 # Ignored by openWakeWord models, which score every 80 ms chunk.
 WAKE_STRIDE_SECONDS = float(_get("WAKE_STRIDE_SECONDS", "0.4"))
 
+# Write down every time the wake word fires, and how the turn went, so the
+# mistakes can be learned from. About 1.5 kB per firing, plus the audio.
+WAKE_LOG = _get("WAKE_LOG", "on").lower() not in ("off", "0", "false", "no")
+
+# How many recordings of firings to keep. The 768 numbers are kept forever
+# — they're what retraining needs — but the audio is 64 kB a time on an SD
+# card, so only the most recent are held on to.
+WAKE_LOG_CLIPS = int(_get("WAKE_LOG_CLIPS", "400"))
+
 
 # --- Timers ---
 # How long a finished timer keeps ringing if nobody says anything. It beeps

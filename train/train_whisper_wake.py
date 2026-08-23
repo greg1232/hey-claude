@@ -203,6 +203,16 @@ def main() -> int:
         y = np.r_[y, np.zeros(len(hard))]
         who = np.r_[who, np.array(["room"] * len(hard))]
 
+    # Keep the features, not just the model. They cost 159 ms each on a Pi
+    # and about twenty minutes altogether, and they are what lets the
+    # speaker relearn from its own mistakes in a second — see
+    # train/relearn.py. float16 halves the file and loses nothing that
+    # survives standardisation anyway.
+    bank = args.out.with_suffix(".bank.npz")
+    np.savez_compressed(bank, X=X.astype(np.float16), y=y, who=who)
+    print(f"  bank of {len(X)} features -> {bank.name} "
+          f"({bank.stat().st_size / 1e6:.1f} MB)")
+
     # Hold one person out completely, so the reported number is for a voice
     # the model has never met.
     test = who == args.holdout
