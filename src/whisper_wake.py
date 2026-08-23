@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 import config
+import wake_log
 
 
 
@@ -124,6 +125,10 @@ class WhisperWakeDetector:
             if chunk is None:
                 continue
             score = self.observe(chunk)
+            if score is not None and score < config.WAKE_THRESHOLD:
+                # Close, but not close enough. Might have been somebody
+                # saying it — see wake_log.consider().
+                wake_log.consider(self, score)
             if score is not None and score >= config.WAKE_THRESHOLD:
                 # Hold on to what fired before reset() wipes the buffer.
                 fired_on = (self.last_vector, self.last_audio, score)

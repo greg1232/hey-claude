@@ -88,6 +88,10 @@ def run_voice_mode() -> None:
                     # part of making it is already paid for.
                     firing = wake_log.note(waker, getattr(
                         waker, "last_score", config.WAKE_THRESHOLD))
+                    # And whatever nearly fired just before it, which is
+                    # very likely the same person saying the same thing and
+                    # being missed the first time.
+                    wake_log.flush_near()
 
                     # 2. Beep, and light the ring blue, so the person knows
                     # it's listening. The ring is the half that keeps saying

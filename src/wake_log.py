@@ -21,6 +21,22 @@ silence is almost certainly a mistake; one followed by "what's the weather"
 is almost certainly real. The speaker already works both of those out in
 the course of answering, and they cost nothing to write down.
 
+Near misses
+-----------
+Logging only what fires would teach the speaker nothing about recall, and
+recall is the weaker half — held out entirely, it catches 52% of one
+child's attempts. The times somebody said "hey Claude" and nothing
+happened are exactly the examples that would fix that, and they never fire,
+so they would never be logged.
+
+So windows that score close to the line are kept in memory for a few
+seconds, and when a firing does happen the ones just before it are written
+down too. That is the "I had to say it three times" case, and the person
+repeating themselves is what labels it: a near miss followed within seconds
+by a real wake word was almost certainly the same person saying the same
+thing, missed. A slower sample is kept as well, for the attempts that were
+never followed by success because whoever it was gave up.
+
 Nothing here is allowed to slow a turn down or break one. Every call is
 wrapped, and a full disk costs you the log, not the speaker.
 
@@ -28,6 +44,7 @@ wrapped, and a full disk costs you the log, not the speaker.
     python src/wake_log.py --clear    throw it away
 """
 
+import collections
 import json
 import sys
 import threading
@@ -47,6 +64,64 @@ WIDTH = 768
 _lock = threading.Lock()
 _rows = 0
 
+# Windows that scored close to the line but didn't cross it, with when they
+# happened. Small: a handful of seconds of candidates, not a history.
+_near: "collections.deque" = None
+_last_sample = 0.0
+
+
+def consider(waker, score: float) -> None:
+    """Offer a window that didn't fire, in case it should have.
+
+    Called for every window the detector scores below the threshold, so it
+    has to be cheap: almost all of them are the room being the room, and
+    are dropped on the first line.
+    """
+    global _near, _last_sample
+    if not config.WAKE_LOG or score < config.WAKE_NEAR:
+        return
+    try:
+        vector = getattr(waker, "last_vector", None)
+        audio = getattr(waker, "last_audio", None)
+        if vector is None or audio is None:
+            return
+
+        now = time.monotonic()
+        if _near is None:
+            _near = collections.deque(maxlen=8)
+        # Copy: the detector's buffer is about to be written over.
+        _near.append((now, float(score), vector.copy(), audio.copy()))
+
+        # Most near misses are never followed by a firing, because the
+        # person gave up or was never talking to us. Keep a slow trickle of
+        # those too, or the log only ever sees the ones that ended well.
+        if now - _last_sample >= config.WAKE_NEAR_EVERY:
+            _last_sample = now
+            _write(vector, audio, score, near=True)
+    except Exception as error:
+        print(f"[wake log] {type(error).__name__}: {error}")
+
+
+def flush_near() -> None:
+    """Write down the near misses just before a firing, then forget them.
+
+    These are the good ones. Somebody said it, nothing happened, they said
+    it again and it worked — so the first attempt was the wake word, and the
+    detector missed it. Nobody had to label that; the repetition did.
+    """
+    global _near
+    if not config.WAKE_LOG or not _near:
+        return
+    try:
+        now = time.monotonic()
+        recent = [item for item in _near
+                  if now - item[0] <= config.WAKE_NEAR_SECONDS]
+        _near.clear()
+        for _when, score, vector, audio in recent:
+            _write(vector, audio, score, near=True, repeated=True)
+    except Exception as error:
+        print(f"[wake log] {type(error).__name__}: {error}")
+
 
 def note(waker, score: float) -> int:
     """Write down a firing. Returns its number, for outcome() later."""
@@ -60,10 +135,14 @@ def note(waker, score: float) -> int:
 
 
 def _note(waker, score: float) -> int:
-    global _rows
-    vector = getattr(waker, "last_vector", None)
-    audio = getattr(waker, "last_audio", None)
+    return _write(getattr(waker, "last_vector", None),
+                  getattr(waker, "last_audio", None), score)
 
+
+def _write(vector, audio, score: float, near: bool = False,
+           repeated: bool = False) -> int:
+    """Put one window in the log. Returns its number."""
+    global _rows
     with _lock:
         AUDIO.mkdir(parents=True, exist_ok=True)
         _count()
@@ -83,12 +162,18 @@ def _note(waker, score: float) -> int:
             _write_wav(AUDIO / f"{number:06d}.wav", audio)
 
         with open(INDEX, "a") as handle:
-            handle.write(json.dumps({
+            row = {
                 "n": number,
                 "at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "score": round(float(score), 4),
                 "has_vector": vector is not None,
-            }) + "\n")
+            }
+            if near:
+                row["near"] = True
+                # Followed by a real firing within seconds, so somebody was
+                # very likely repeating themselves.
+                row["repeated"] = repeated
+            handle.write(json.dumps(row) + "\n")
         _rows += 1
 
     _tidy()
@@ -189,6 +274,8 @@ if __name__ == "__main__":
     if not firings:
         raise SystemExit(f"Nothing logged yet. Looked in {WHERE}")
 
+    near = [f for f in firings if f.get("near")]
+    firings = [f for f in firings if not f.get("near")]
     answered = sum(1 for f in firings if f.get("answered"))
     silent = sum(1 for f in firings if f.get("heard") == "")
     print(f"{len(firings)} firings logged in {WHERE}")
@@ -196,7 +283,10 @@ if __name__ == "__main__":
     print(f"  {silent} were followed by nobody saying anything")
     print(f"  {len(firings) - answered - silent} something was said, "
           "but not to the speaker")
-    print(f"  {len(list(AUDIO.glob('*.wav')))} still have their audio\n")
+    print(f"  {len(list(AUDIO.glob('*.wav')))} still have their audio")
+    repeated = sum(1 for f in near if f.get("repeated"))
+    print(f"{len(near)} near misses, {repeated} of them just before a real "
+          "wake word\n")
     for firing in firings[-15:]:
         mark = "OK " if firing.get("answered") else "no "
         print(f"  {mark} {firing['at'][11:19]} {firing['score']:.3f} "

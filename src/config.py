@@ -142,6 +142,20 @@ WAKE_LOG = _get("WAKE_LOG", "on").lower() not in ("off", "0", "false", "no")
 # card, so only the most recent are held on to.
 WAKE_LOG_CLIPS = int(_get("WAKE_LOG_CLIPS", "400"))
 
+# Also write down windows that came close but didn't fire — the times
+# somebody said it and nothing happened. Logging only what fires teaches
+# the speaker nothing about the half of the problem it is worse at.
+WAKE_NEAR = float(_get("WAKE_NEAR", "0.5"))
+
+# How far back to look for near misses when a wake word does fire. Long
+# enough to catch somebody saying it twice, short enough that the room
+# before it isn't swept up.
+WAKE_NEAR_SECONDS = float(_get("WAKE_NEAR_SECONDS", "15"))
+
+# And a slow trickle of near misses that were never followed by success,
+# because whoever it was gave up. Seconds between samples.
+WAKE_NEAR_EVERY = float(_get("WAKE_NEAR_EVERY", "180"))
+
 
 # --- Timers ---
 # How long a finished timer keeps ringing if nobody says anything. It beeps
