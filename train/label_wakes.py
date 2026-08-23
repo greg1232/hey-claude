@@ -132,7 +132,10 @@ def label_locally(firing: dict) -> tuple[int | None, str]:
             # nothing happened, and they said it again — so this was the
             # wake word and the detector missed it. The person repeating
             # themselves is the label.
-            return 1, "said again seconds later, so this one was missed"
+            # The wording matters: relearn.py throws away labels carrying
+            # the old text, from when this rule kept eight near misses per
+            # firing instead of one. See wake_log.flush_near().
+            return 1, "repeated within seconds, so this one was missed"
         if window and SOUNDS_RIGHT.search(window):
             return 1, "the window says Claude"
         return None, ""

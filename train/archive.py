@@ -53,6 +53,17 @@ REPO = "claude-speaker-room"
 # log cannot.
 KEEP = ("wakes", "enrolled", "metadata.csv", "README.md")
 
+# The corpus the first model was ever fitted on, which lives in the project
+# rather than in state/ and so was missing from the archive entirely: the
+# dataset held everything the speaker had learned and nothing it had been
+# taught. Uploaded once — they don't change — and skipped after that.
+FOUNDING = (
+    (HERE / "real" / "hey_claude", "recorded/wake_word",
+     "people saying the wake word on purpose"),
+    (HERE / "room", "recorded/room",
+     "the room not saying it"),
+)
+
 
 def token() -> str:
     sys.path.insert(0, str(HERE.parent / "src"))
@@ -91,10 +102,37 @@ def snapshot(say=print) -> str:
         )
         sha = getattr(commit, "oid", "") or ""
         say(f"  dataset committed as {sha[:8]} in {repo}")
+        keep_recordings(api, repo, say)
         return sha
     except Exception as error:
         say(f"  couldn't archive ({type(error).__name__}: {error})")
         return ""
+
+
+def keep_recordings(api, repo: str, say=print) -> None:
+    """Upload the founding corpus, once.
+
+    Seventy five megabytes of room, and eighty recordings of four people
+    saying the phrase. They are what the shipped model was fitted on, and
+    without them the archive can show what changed since but not what it
+    started from.
+    """
+    there = set(api.list_repo_files(repo, repo_type="dataset"))
+    for folder, where, what in FOUNDING:
+        if not folder.is_dir():
+            continue
+        have = sum(1 for f in there if f.startswith(where + "/"))
+        want = len(list(folder.glob("*.wav")))
+        if have >= want or not want:
+            continue
+        say(f"  uploading {want - have} recordings of {what} (once)")
+        try:
+            api.upload_folder(folder_path=str(folder), repo_id=repo,
+                              repo_type="dataset", path_in_repo=where,
+                              allow_patterns=["*.wav"],
+                              commit_message=f"The {what}")
+        except Exception as error:
+            say(f"    couldn't ({type(error).__name__}: {error})")
 
 
 def keep_model(model: Path, sha: str, scores: dict, say=print) -> None:
@@ -200,6 +238,10 @@ Last updated {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')}.
 - `wakes/audio/` — the two seconds that fired, 16 kHz mono. The Pi keeps
   only the most recent few hundred; everything ever uploaded stays here.
 - `enrolled/` — somebody teaching it their voice by repeating the phrase.
+- `recorded/wake_word/` — eighty recordings of four people saying "hey
+  Claude" on purpose, and `recorded/room/` — the room not saying it. This
+  is the corpus the first model was fitted on, before the speaker had
+  heard anything for itself.
 - `models/` — one per retraining, named for the dataset commit it was
   fitted on. The same sha is inside the file, as `dataset`.
 

@@ -386,6 +386,29 @@ fine-grained token with write access to that one repository is enough, and
 is what to use — this is a token sitting on a device in a living room.
 Without it, retraining still works and simply says nothing is archived.
 
+### What the gate judges on
+
+Somebody who sat and listened to a clip is the only ground truth here, so
+that is what the promotion gate measures against — not a random slice of
+everything, which was measuring agreement with the machine's own guesses
+and is why the numbers swung between runs.
+
+In practice it can only answer half the question. Labelling a day of a
+television room produces almost entirely "no" — **142 of the first 143** —
+which measures false wakes beautifully and says nothing about recall. So
+human labels are used for the classes they cover, and machine labels fill
+in the class they don't, with the report saying which was which:
+
+```
+judging on 143 firings a person listened to, plus 75 the machine
+labelled to cover the other answer
+```
+
+The human half only grows, so two runs a week apart can be compared. The
+way to make the number trustworthy is to label clips that *are* the wake
+word — which needs firings with audio, and until recently there weren't
+any.
+
 First archive:
 
 ```

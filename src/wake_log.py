@@ -103,11 +103,22 @@ def consider(waker, score: float) -> None:
 
 
 def flush_near() -> None:
-    """Write down the near misses just before a firing, then forget them.
+    """Write down the one near miss just before a firing, and forget the rest.
 
-    These are the good ones. Somebody said it, nothing happened, they said
-    it again and it worked — so the first attempt was the wake word, and the
-    detector missed it. Nobody had to label that; the repetition did.
+    Somebody said it, nothing happened, they said it again and it worked —
+    so the first attempt was the wake word and the detector missed it.
+    Nobody had to label that; the repetition did.
+
+    One, though. This used to keep every near miss from the previous
+    fifteen seconds, up to eight of them, and call them all repetitions.
+    In a room with a television on, that is one real wake word
+    manufacturing eight positives out of the room being a room — and it
+    produced 1,527 of the 2,436 labels in the log, sixty-three per cent of
+    the training data from the single least trustworthy rule. The false
+    wake rate doubled every time the model was fitted on it.
+
+    Somebody saying a thing twice says it again within a couple of
+    seconds, so that is all that is taken.
     """
     global _near
     if not config.WAKE_LOG or not _near:
@@ -115,9 +126,10 @@ def flush_near() -> None:
     try:
         now = time.monotonic()
         recent = [item for item in _near
-                  if now - item[0] <= config.WAKE_NEAR_SECONDS]
+                  if now - item[0] <= config.WAKE_REPEAT_SECONDS]
         _near.clear()
-        for _when, score, vector, audio in recent:
+        if recent:
+            _when, score, vector, audio = recent[-1]
             _write(vector, audio, score, near=True, repeated=True)
     except Exception as error:
         print(f"[wake log] {type(error).__name__}: {error}")

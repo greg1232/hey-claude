@@ -147,10 +147,13 @@ WAKE_LOG_CLIPS = int(_get("WAKE_LOG_CLIPS", "400"))
 # the speaker nothing about the half of the problem it is worse at.
 WAKE_NEAR = float(_get("WAKE_NEAR", "0.5"))
 
-# How far back to look for near misses when a wake word does fire. Long
-# enough to catch somebody saying it twice, short enough that the room
-# before it isn't swept up.
+# How far back to keep near misses in memory when a wake word fires.
 WAKE_NEAR_SECONDS = float(_get("WAKE_NEAR_SECONDS", "15"))
+
+# And how recent the one before a firing has to be to count as somebody
+# repeating themselves. Short: a person who says a thing twice says it
+# again within a couple of seconds, and anything longer is the room.
+WAKE_REPEAT_SECONDS = float(_get("WAKE_REPEAT_SECONDS", "4"))
 
 # And a slow trickle of near misses that were never followed by success,
 # because whoever it was gave up. Seconds between samples.
