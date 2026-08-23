@@ -237,6 +237,24 @@ def _play(device, rate: int, audio) -> None:
         _drain(stream)
 
 
+def spoken_pieces(text: str):
+    """Piper reading `text`, handed back a piece at a time as (rate, audio).
+
+    For books.py, which needs the audio rather than the speaker: it plays
+    the pieces itself so that it can stop between them, keep its place, and
+    give the device back when somebody asks a question.
+    """
+    voice = _piper_voice()
+    if voice is None:
+        return
+    from piper import SynthesisConfig
+
+    settings = SynthesisConfig(length_scale=175 / config.SPEECH_RATE)
+    native = voice.config.sample_rate
+    for chunk in _synthesise(voice, text, settings):
+        yield native, _trimmed(chunk.audio_int16_array, native)
+
+
 def play_clip(audio, rate: int) -> None:
     """Play one lump of audio somebody found, at whatever rate it came at.
 

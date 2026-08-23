@@ -79,6 +79,11 @@ ALIASES = {
 MAX_HOURS = 24.0
 
 _lock = threading.RLock()
+# Other things that hold the speaker and have to step aside for it to talk.
+# books.py registers itself here, so every existing `with paused():` — in
+# tts.speak, in beep, in the main loop — quiets a story too, without any of
+# them having to know stories exist.
+_others: list = []
 _stream = None
 _maker = None
 _name: str | None = None
@@ -274,6 +279,11 @@ def what_is_playing() -> str:
     return left()
 
 
+def also_pause(pause, resume) -> None:
+    """Register something else that has to go quiet when the speaker talks."""
+    _others.append((pause, resume))
+
+
 class paused:
     """Give the speaker back for a moment, then carry on where it was.
 
@@ -287,12 +297,18 @@ class paused:
             _paused_depth += 1
             if _paused_depth == 1:
                 _shut()
+                for pause, _resume in _others:
+                    pause()
 
     def __exit__(self, *exc) -> None:
         global _paused_depth
         with _lock:
             _paused_depth = max(0, _paused_depth - 1)
-            if _paused_depth == 0 and _name is not None:
+            if _paused_depth:
+                return
+            for _pause, resume in _others:
+                resume()
+            if _name is not None:
                 if time.monotonic() >= _until:
                     stop()
                 else:

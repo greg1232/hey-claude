@@ -89,6 +89,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/timers.py` | Timers and alarms, and the ringing |
 | `src/lights.py` | The LED ring on the array, showing what it's doing |
 | `src/sounds.py` | Rain, ocean, a fire — made as they play |
+| `src/effects.py` | Real recordings — what a bullfrog sounds like |
+| `src/books.py` | Reads books aloud, and remembers the place |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/wake_log.py` | Writes down every wake-word firing, to learn from |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
@@ -99,6 +101,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/record_wake.py` | Records people saying the wake word |
 | `train/record_room.py` | Records the room not saying it |
 | `train/train_whisper_wake.py` | Trains the wake word |
+| `train/build_book_index.py` | Builds the local index of 48,284 books |
 | `train/label_wakes.py` | Decides which logged firings were real |
 | `train/relearn.py` | Retrains on them, in about a second |
 | `train/test_wake.py` | Checks it hears you |
@@ -234,6 +237,54 @@ a bedroom is the part only a person can test.
 SOUND_VOLUME=0.30
 SOUND_HOURS=8
 ```
+
+### Books
+
+```
+"hey claude, read me Treasure Island"
+"hey claude, next chapter"
+"hey claude, stop"
+       ...the next evening...
+"hey claude, read me Treasure Island"    -> carries on from chapter five
+```
+
+**LibriVox first.** Twenty thousand public-domain books read aloud by human
+volunteers, free, no key. For a bedtime story that beats Piper outright — a
+real voice for two hours instead of a very good two-sentence voice stretched
+over a chapter — and it costs the Pi no synthesis at all. Chapters arrive
+pre-split with titles and durations, so "next chapter" is an index lookup.
+Measured on the Pi: 0.99x realtime, with the following chapter fetched
+while the current one plays so the joins are silent.
+
+**Gutenberg second**, for anything nobody has recorded, read by Piper.
+
+Getting at Gutenberg is the awkward part, and worth writing down because
+the obvious routes are all dead:
+
+```
+gutenberg.org book text        503 Service Unavailable
+gutenberg.org pg_catalog.csv   504 Gateway Timeout, after 33s
+gutendex.com                   timeout, twice
+Standard Ebooks OPDS           401 Unauthorized
+Hugging Face /search, /filter  500 Internal Server Error
+```
+
+So the corpus comes from Hugging Face (`sedthh/gutenberg_english`, 48,284
+books, 10.7 GB) and the searching happens here. `train/build_book_index.py`
+keeps a **2.4 MB** local index of every title, author and bookshelf, which
+is cheap because parquet is columnar: reading just the metadata column out
+of a 340 MB file takes 1.7 seconds over HTTP, and 69 seconds for all 37.
+Looking a title up needs no network at all; only the book itself is
+fetched, in one call, in a second or two.
+
+Gutenberg's own `bookshelves` field is what makes "read me a story" work —
+1,323 books on a children's shelf, Alice and Peter Pan and Sleepy Hollow
+among them.
+
+**The place is remembered**, written every ten seconds so a power cut costs
+seconds rather than an evening, and matched loosely on the way back:
+LibriVox files A Tale of Two Cities as "Tale of Two Cities", so an exact
+lookup would find nothing and start the book again from the beginning.
 
 ### Web search
 
