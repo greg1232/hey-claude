@@ -66,7 +66,12 @@ class WakeWordDetector:
         if custom is not None:
             # A model file you trained yourself, e.g. models/hey_claude.onnx
             print(f"Loading the wake word from {custom.name}...")
-            to_load, phrase = str(custom), custom.stem
+            # The phrase is the filename, minus anything after a dash. Model
+            # files pick up suffixes as you try things — hey_claude-room,
+            # hey_claude-96 — and without this the speaker introduces itself
+            # as "say hey claude-room".
+            to_load = str(custom)
+            phrase = custom.stem.split("-")[0]
         else:
             # One of the wake words openWakeWord ships with.
             print(f"Loading the '{config.WAKE_MODEL}' wake word...")
@@ -132,6 +137,14 @@ def make_waker():
 
     if mode == "key":
         return KeyWaker()
+
+    # A .npz is a wake word built on Whisper's encoder rather than
+    # openWakeWord's frozen CNN. See src/whisper_wake.py for why.
+    import whisper_wake
+
+    whisper_model = whisper_wake.find_model(config.WAKE_MODEL)
+    if whisper_model is not None:
+        return whisper_wake.WhisperWakeDetector(whisper_model)
 
     if mode in ("auto", "openwakeword"):
         try:

@@ -43,15 +43,35 @@ false_positive_validation_data_path: "./train/data/validation_set_features.npy"
 feature_data_files:
   "ACAV100M_sample": "./train/data/openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
 
+# Each batch is built from these three, so these numbers are the model's
+# diet. "adversarial_negative" is negative_train/, which is where recorded
+# room audio goes — at 50 it was 4% of the batch, and room clips only a
+# third of that, which is far too thin to fix a model firing 180 times an
+# hour on that exact sound. Raised to 200.
+# Back to the full batch. Quartering this was a workaround for what turned
+# out to be a memory leak in the trainer, not a property of the rnn — and
+# a smaller batch made the leak worse, because it mines fewer hard examples
+# and so takes the accumulating branch more often. See LEAK_FIXES in
+# train_local.py. Keeping the batch identical to the dnn runs also makes
+# the two architectures comparable.
 batch_n_per_class:
   "ACAV100M_sample": 1024
-  "adversarial_negative": 50
+  "adversarial_negative": 200
   "positive": 50
 
 # A small network on top of openWakeWord's frozen audio embedding —
 # small enough to train on a laptop CPU.
+# "rnn" — a two layer bidirectional LSTM reading the 16 time steps in order
+# — is the better-shaped model for a spoken phrase, and worth returning to.
+# It is also 18 times slower per step than the dnn (7 steps a second
+# against 130), which is two and a half hours a run instead of thirteen
+# minutes. That's too slow to learn anything from while iterating.
 model_type: "dnn"
-layer_size: 32
+# 32 units could separate synthetic speech from generic audio. It cannot
+# separate four real voices from the room they were recorded in: measured
+# across every threshold, recall and false wakes move together, which is a
+# model sliding one operating point rather than telling two things apart.
+layer_size: 96
 
 # The main time dial. Measured at ~36 steps/sec on an M2 CPU, so this is
 # about 23 minutes. This is openWakeWord's own full-quality default.

@@ -85,7 +85,13 @@ python src/wake.py           # 5. wake up three times, then stop
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
-| `train/test_silence.py` | Checks a wake word doesn't fire in a quiet room |
+| `src/whisper_wake.py` | The wake word, on Whisper's encoder |
+| `train/record_wake.py` | Records people saying the wake word |
+| `train/record_room.py` | Records the room not saying it |
+| `train/train_whisper_wake.py` | Trains the wake word |
+| `train/evaluate.py` | Scores a wake word on data it never saw |
+| `train/test_wake.py` | Checks it hears you |
+| `train/test_silence.py` | Checks it doesn't fire in a quiet room |
 | `deploy.sh` | Puts the whole thing on a Raspberry Pi |
 
 Only `brain.py` and `weather.py` use the internet. The microphone, the wake
@@ -112,34 +118,98 @@ coat?"*, which it can now actually answer.
 
 ## About the wake word
 
-The design says "Hey Claude", and that's still the goal — but openWakeWord
-only ships a handful of pre-trained wake words, and "Hey Claude" isn't one
-of them. Until you train it, the speaker listens for **"hey jarvis"**.
+The speaker listens for **"hey Claude"** using `models/hey_claude_whisper.npz`
+— a classifier on top of Whisper's encoder. Set in `.env`:
 
-A trained one ships in `models/hey_claude.onnx` — set `WAKE_MODEL=hey_claude.onnx`
-in `.env` to use it. It's also on the Hub as
-[gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude).
+```
+WAKE_MODEL=hey_claude_whisper.npz
+WAKE_THRESHOLD=0.99
+```
 
-It stays silent in an empty room — 180 seconds on a real microphone, worst
-score 0.001 — and ignores ordinary speech. Two things to know: it's strict,
-so say the phrase clearly (try `WAKE_THRESHOLD=0.3` if it misses you), and it
-false-wakes on **"hey clyde"**.
+### Why not openWakeWord
 
-Check it on your own microphone before trusting it:
+The project started with [openWakeWord](https://github.com/dscripka/openWakeWord),
+and there's a trained model here for it (`models/hey_claude.onnx`, also on
+the Hub as [gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude)).
+It scores 0.99 on the synthetic speech it was trained on. On real people it
+scored **0.001**, and woke on 7 recordings out of 80.
+
+Recording 80 real utterances from four people fixed that — 9% to 80% — and
+broke false wakes instead: about 180 an hour on the real microphone.
+Recording 40 minutes of the actual room cut that twelvefold. Widening the
+head from 32 to 96 units lifted the whole curve. None of it broke the
+underlying problem, which was that recall and false wakes moved together at
+every threshold: the model was sliding one operating point rather than
+telling two things apart.
+
+The reason is in the shape of the thing. openWakeWord is a mel filterbank,
+a **frozen 0.33M parameter CNN from 2020**, and a small head you train.
+Measured on this Pi:
+
+| stage | per 80 ms chunk | share |
+|---|---|---|
+| melspectrogram | 0.95 ms | 7% |
+| frozen embedding CNN | 11.75 ms | **91%** |
+| the head you train | 0.18 ms | **1%** |
+
+Everything tunable is 1% of the compute. If the frozen 91% doesn't
+distinguish your family saying "hey Claude" from your family saying
+anything else, nothing on top can recover it — and it doesn't.
+
+### Whisper's encoder instead
+
+Whisper's `tiny.en` encoder was trained on a great deal more speech. Feed it
+a two second window, keep the first 100 frames, mean and max pool, and put
+a logistic regression on top. Same recordings, same room:
+
+| | openWakeWord, best | **Whisper encoder** |
+|---|---|---|
+| recall at ~55 false wakes/hr | 42% | **84%** |
+| recall at ~125 false wakes/hr | 59% | **91%** |
+| cost on a Pi 4 | 0.16x realtime | 0.42x realtime |
+
+Double the recall for two and a half times the compute, which a Pi 4 has to
+spare — about 10% of the machine, leaving three cores for Whisper and the
+voice. The trained part is 11 kB.
+
+Two lessons are baked into `train/train_whisper_wake.py`, both learned the
+hard way:
+
+- **Negatives must include speech that isn't the wake word.** Trained
+  against room noise alone it reached 94% recall and zero false wakes —
+  by learning "somebody is talking". It fired on 86% of other spoken
+  phrases.
+- **Score it the way it runs.** Isolated clips gave 0 false wakes; sliding
+  a window over the same audio continuously gave 391 an hour. A streaming
+  detector has to be measured streaming.
+
+### Making your own
 
 ```bash
+python train/record_wake.py --speaker greg,ojas,tejas,ana --times 20
+python train/record_room.py --minutes 30 --label tv
+python train/train_whisper_wake.py
+```
+
+Record on the machine the speaker lives on, through its microphone. Twenty
+utterances each from four people and forty minutes of room is enough. Say
+it varied — closer, further, mumbled — and record the room at its noisiest,
+television included. Then check it:
+
+```bash
+python train/test_wake.py models/hey_claude_whisper.npz --times 6
 python train/test_silence.py models/hey_claude.onnx --seconds 180
 ```
 
-**To train your own: see [docs/training-hey-claude.md](docs/training-hey-claude.md).**
-It runs entirely on this laptop — no Colab, no GPU — in about **5 GB of
-downloads and 80 minutes**, and you never have to say the phrase into a
-microphone yourself.
+**To train an openWakeWord model instead**, see
+[docs/training-hey-claude.md](docs/training-hey-claude.md) — about 5 GB of
+downloads and 80 minutes, and you never have to say the phrase yourself.
+`models/hey_claude-96.onnx` is the best one this project produced.
 
 Other options, both in `.env`:
 
 ```
-WAKE_MODEL=alexa      # built-in choices: hey_jarvis, alexa, hey_mycroft
+WAKE_MODEL=alexa      # openWakeWord's built-ins: hey_jarvis, alexa, hey_mycroft
 WAKE_MODE=key         # skip the wake word — press Enter to talk instead
 ```
 

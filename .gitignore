@@ -33,6 +33,19 @@ train/*/
 # ...but keep the stub package the trainer needs to import.
 !train/stub/
 
+# Recordings of the people who use it, saying the wake word. Small, and the
+# thing you can't regenerate — a model without them is the one that scored
+# 0.001 on real voices.
+!train/real/
+
+# Room recordings are NOT kept. Forty minutes of television is 75 MB, and
+# re-recording it is one command that costs nothing but time:
+#     python train/record_room.py --minutes 30 --label tv
+# It has to come from your own room and your own microphone anyway.
+
+# Written by a training run, not by a person.
+train/history.json
+
 # Build output of a training run. The copy that matters lives in models/.
 train/*.onnx
 train/*.tflite

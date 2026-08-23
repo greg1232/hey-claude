@@ -9,6 +9,7 @@ While the speaker is talking, incoming audio is thrown away — otherwise it
 hears its own voice and wakes itself up.
 """
 
+import collections
 import queue
 import time
 
@@ -31,6 +32,11 @@ class Microphone:
     def __init__(self) -> None:
         self._queue: queue.Queue = queue.Queue()
         self._stream: sd.InputStream | None = None
+        # How loud the room has been lately. Kept as a rolling window so the
+        # cutoff between speech and silence can follow the room instead of
+        # being fixed at whatever it happened to be when the program
+        # started. About thirty seconds of history.
+        self._recent: collections.deque = collections.deque(maxlen=375)
 
     def __enter__(self) -> "Microphone":
         device = find_device(config.INPUT_DEVICE)
@@ -60,7 +66,9 @@ class Microphone:
         # speaker never hears itself.
         if tts.speaking.is_set():
             return
-        self._queue.put(indata[:, 0].copy())
+        chunk = indata[:, 0].copy()
+        self._recent.append(loudness(chunk))
+        self._queue.put(chunk)
 
     def read(self, timeout: float = 1.0) -> np.ndarray | None:
         """Get the next chunk of audio, or None if nothing arrived in time."""
@@ -91,6 +99,27 @@ class Microphone:
         keep = int(keep_seconds / chunk_seconds)
         return waiting[-keep:] if keep else []
 
+    def noise_floor(self) -> float:
+        """How loud "silence" is right now, from the last half minute.
+
+        This has to keep up with the room. Measured once at startup, a
+        speaker that was quiet at breakfast is still using the breakfast
+        threshold when the television goes on — and then nothing is ever
+        below it, so recording runs until MAX_RECORD_SECONDS and hoovers up
+        whatever the television said after the person stopped talking. That
+        arrives at Whisper as a question with a soap opera stuck on the end.
+
+        The window is the audio just before someone speaks, which is the
+        room and not them: the wake word has to be heard first, and while
+        it's being waited for nobody is talking to the speaker.
+        """
+        if not self._recent:
+            return 500.0
+        # The median ignores the wake word itself and any door slam; the
+        # floor stops a genuinely silent room making this impossibly touchy.
+        quiet = float(np.median(self._recent))
+        return max(quiet * 3.0, 250.0)
+
     def measure_noise_floor(self, seconds: float = 0.6) -> float:
         """Listen to the quiet room for a moment to learn how loud "silence" is.
 
@@ -113,12 +142,16 @@ class Microphone:
         # silent room doesn't make the threshold impossibly sensitive.
         return max(quiet * 3.0, 250.0)
 
-    def record_until_silence(self, silence_level: float) -> np.ndarray:
+    def record_until_silence(self, silence_level: float | None = None) -> np.ndarray:
         """Record until the person stops talking, then return the audio.
 
         Recording always lasts at least MIN_RECORD_SECONDS, stops after
         SILENCE_SECONDS of quiet, and gives up at MAX_RECORD_SECONDS.
         """
+        # No level given means work it out from the room as it is now.
+        if silence_level is None:
+            silence_level = self.noise_floor()
+
         # Keep the tail of what's already queued, so a question that starts
         # the instant the wake word ends doesn't lose its first word.
         chunks: list[np.ndarray] = self.flush(config.PRE_ROLL_SECONDS)

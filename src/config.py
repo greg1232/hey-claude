@@ -109,3 +109,10 @@ WAKE_MODEL = _get("WAKE_MODEL", "hey_jarvis")
 # How confident the detector has to be (0 to 1). Raise it if the speaker
 # keeps waking up on its own; lower it if it ignores you.
 WAKE_THRESHOLD = float(_get("WAKE_THRESHOLD", "0.5"))
+
+# How often a Whisper-based wake word looks, in seconds. It reads a two
+# second window, and the phrase is under one, so the phrase falls inside
+# several consecutive windows and doesn't have to be caught first time.
+# Shorter costs proportionally more compute for slightly less delay.
+# Ignored by openWakeWord models, which score every 80 ms chunk.
+WAKE_STRIDE_SECONDS = float(_get("WAKE_STRIDE_SECONDS", "0.4"))

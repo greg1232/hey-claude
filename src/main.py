@@ -32,7 +32,7 @@ def run_voice_mode() -> None:
     waker = wake.make_waker()
 
     with audio_in.Microphone() as mic:
-        silence_level = mic.measure_noise_floor()
+        mic.measure_noise_floor()  # Listen for a moment before saying ready.
         # Ctrl-C is only an answer if someone is looking at a terminal. When
         # this is running in the background its output goes to a log, and
         # telling the reader to press a key there is just confusing.
@@ -49,8 +49,10 @@ def run_voice_mode() -> None:
             tts.beep()
             print("Listening...")
 
-            # 3. Record until they stop talking.
-            audio = mic.record_until_silence(silence_level)
+            # 3. Record until they stop talking. The cutoff is worked out
+            # from the room as it sounded just now, not as it sounded when
+            # the speaker was switched on — televisions get turned on.
+            audio = mic.record_until_silence()
 
             # 4. Turn the recording into words.
             question = stt.transcribe(audio)

@@ -149,7 +149,7 @@ if [ -f .env.pi ]; then
   echo "    using .env.pi"
   cat .env.pi > "$ENV_TMP"
 else
-  grep -vE '^[[:space:]]*(INPUT_DEVICE|OUTPUT_DEVICE|VOICE|PIPER_VOICE|WHISPER_MODEL)=' .env > "$ENV_TMP" || true
+  grep -vE '^[[:space:]]*(INPUT_DEVICE|OUTPUT_DEVICE|VOICE|PIPER_VOICE|WHISPER_MODEL|WAKE_MODEL|WAKE_THRESHOLD)=' .env > "$ENV_TMP" || true
   cat >> "$ENV_TMP" <<'PIENV'
 
 # ---- Added by deploy.sh, because this is the Pi and not the laptop ----
@@ -185,6 +185,18 @@ OUTPUT_DEVICE=Array
 # rather than a quiet one. Turn it down here if it's too loud at night;
 # leave it blank to not touch the system mixer at all.
 OUTPUT_VOLUME=100
+
+# Which wake word, and how sure it has to be. These belong to the Pi
+# rather than the laptop, because the right threshold depends on the
+# microphone and the room — measure yours:
+#     python train/evaluate.py models/<model>.onnx --sweep
+WAKE_MODEL=hey_claude_whisper.npz
+WAKE_THRESHOLD=0.99
+
+# How often the Whisper wake word looks, in seconds. Costs about 42% of one
+# core at 0.4 on a Pi 4. Raise it to spend less, at the cost of noticing you
+# a little later.
+WAKE_STRIDE_SECONDS=0.4
 
 # A Pi 4 is much slower than a laptop at speech recognition, so use the
 # small model. Change it to base.en if it mishears too often and you don't
