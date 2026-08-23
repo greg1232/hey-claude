@@ -128,6 +128,23 @@ WAKE_THRESHOLD = float(_get("WAKE_THRESHOLD", "0.5"))
 WAKE_STRIDE_SECONDS = float(_get("WAKE_STRIDE_SECONDS", "0.4"))
 
 
+# --- Timers ---
+# How long a finished timer keeps ringing if nobody says anything. It beeps
+# in bursts with gaps to listen in, so you can stop it by saying the wake
+# word; this is the backstop for when nobody is in the room.
+RING_SECONDS = float(_get("RING_SECONDS", "30"))
+
+
+# --- The LED ring on the microphone array ---
+# Shows what the speaker is doing: blue for listening, green for talking,
+# red when a timer goes off. Set LEDS=off if you'd rather it stayed dark.
+LEDS = _get("LEDS", "on").lower() not in ("off", "0", "false", "no")
+
+# Out of 255. The ring is genuinely bright — this is a lamp on a shelf in
+# the evening, not a status light in a server room.
+LED_BRIGHTNESS = int(_get("LED_BRIGHTNESS", "40"))
+
+
 if __name__ == "__main__":
     # Print what the speaker will actually use, which is not always what you
     # think you set — .env overrides these, and a typo in a name is silent.

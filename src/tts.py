@@ -178,6 +178,42 @@ def beep() -> None:
         _play(device, rate, (tone * fade * 32767).astype(np.int16))
 
 
+def ring_once() -> None:
+    """One burst of the timer alarm: two short beeps, about half a second.
+
+    Deliberately short. A timer rings for half a minute (see timers.py) and
+    the microphone is deaf for as long as the speaker is playing, so the
+    ringing is broken into bursts with long gaps to listen in — otherwise
+    "hey Claude, stop" couldn't be heard until it had finished ringing on
+    its own. The gaps are why this beeps twice and stops rather than
+    holding a note.
+
+    Two notes a fifth apart, which carries across a room better than one.
+    """
+    import numpy as np
+
+    device = find_output_device(config.OUTPUT_DEVICE)
+    rate = playable_rate(device, 22_050)
+
+    parts = []
+    for hertz in (1047, 1568):  # C6 and G6.
+        t = np.arange(int(rate * 0.18)) / rate
+        note = 0.4 * np.sin(2 * np.pi * hertz * t)
+        # Fade both ends, or it clicks — and a click is what a broken
+        # speaker sounds like.
+        fade = np.minimum(np.minimum(t, t[-1] - t) * 80, 1.0)
+        parts.append(note * fade)
+        parts.append(np.zeros(int(rate * 0.09)))
+
+    audio = (np.concatenate(parts) * 32767).astype(np.int16)
+    with _device:
+        speaking.set()
+        try:
+            _play(device, rate, audio)
+        finally:
+            speaking.clear()
+
+
 def _play(device, rate: int, audio) -> None:
     """Play one lump of audio, and give the speaker back afterwards.
 

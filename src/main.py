@@ -17,6 +17,7 @@ import sys
 import audio_in
 import brain
 import config
+import lights
 import stt
 import timers
 import tts
@@ -29,7 +30,7 @@ def run_voice_mode() -> None:
     print("Starting up...")
     the_brain = brain.Brain()
     weather.start()  # Fetches in the background; never blocks a question.
-    timers.start(tts.speak)  # Rings on its own thread, minutes from now.
+    timers.start(tts.speak, tts.ring_once)  # Rings on its own thread.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()
@@ -47,11 +48,19 @@ def run_voice_mode() -> None:
         else:
             stop = "Stop it with ./start.sh --stop"
         print(f"\nReady — {waker.label}. {stop}\n")
+        lights.show("idle")
 
         while True:
             # 1. Wait to be woken up.
             if not waker.wait_for_wake(mic):
                 break
+
+            # If a timer is ringing, saying the wake word is how you stop
+            # it. This has to come before the turn lock, not after: the
+            # ringing thread is holding that lock, and waiting for it would
+            # mean waiting out the alarm.
+            if timers.hush():
+                print("(hushed the alarm)")
 
             # Everything from here to the end of the answer is one turn. A
             # timer coming due in the middle waits for it: ringing over the
@@ -59,42 +68,56 @@ def run_voice_mode() -> None:
             # middle of the recording, which Whisper duly transcribes as a
             # word in the question.
             with timers.turn:
-                # 2. Beep so the person knows it's listening.
-                tts.beep()
-                print("Listening...")
+                # Whatever happens in here — a question, a false wake,
+                # a network error — the ring goes dark again on the way
+                # out. A speaker left glowing blue looks like it is still
+                # listening to you, which is the one thing it must not do
+                # by mistake.
+                try:
+                    # 2. Beep, and light the ring blue, so the person knows
+                    # it's listening. The ring is the half that keeps saying
+                    # so while they're actually talking.
+                    lights.show("listening")
+                    tts.beep()
+                    print("Listening...")
 
-                # 3. Record until they stop talking. The cutoff is worked
-                # out from the room as it sounded just now, not as it
-                # sounded when the speaker was switched on — televisions
-                # get turned on.
-                audio = mic.record_until_silence()
+                    # 3. Record until they stop talking. The cutoff is worked
+                    # out from the room as it sounded just now, not as it
+                    # sounded when the speaker was switched on — televisions
+                    # get turned on.
+                    audio = mic.record_until_silence()
 
-                # 4. Turn the recording into words.
-                question = stt.transcribe(audio)
-                if not question:
-                    # Nothing was said. With a television on, the wake word
-                    # fires by mistake dozens of times an hour, and this is
-                    # what almost all of those look like — so say nothing
-                    # rather than announcing the mistake to an empty room.
-                    print("(woke up, but nobody was talking)")
-                    continue
-                print(f"You: {question}")
+                    # 4. Turn the recording into words.
+                    lights.show("thinking")
+                    question = stt.transcribe(audio)
+                    if not question:
+                        # Nothing was said. With a television on, the wake word
+                        # fires by mistake dozens of times an hour, and this is
+                        # what almost all of those look like — so say nothing
+                        # rather than announcing the mistake to an empty room.
+                        print("(woke up, but nobody was talking)")
+                        continue
+                    print(f"You: {question}")
 
-                # 5. Ask Claude, then say the answer out loud.
-                answer = the_brain.ask(question)
-                if not answer:
-                    # Somebody was talking, but not to us — the television
-                    # again. Claude spotted it; see brain.SILENCE.
-                    print(f"(not for me: {question!r})")
-                    continue
-                print(f"Claude: {answer}\n")
-                tts.speak(answer)
+                    # 5. Ask Claude, then say the answer out loud.
+                    answer = the_brain.ask(question)
+                    if not answer:
+                        # Somebody was talking, but not to us — the television
+                        # again. Claude spotted it; see brain.SILENCE.
+                        print(f"(not for me: {question!r})")
+                        continue
+                    print(f"Claude: {answer}\n")
+                    lights.show("speaking")
+                    tts.speak(answer)
+                finally:
+                    lights.show("idle")
 
 
 def run_text_mode() -> None:
     """Type questions instead of speaking them. Handy for testing."""
     the_brain = brain.Brain()
-    timers.start(lambda words: (print(f"\n*** {words}"), tts.speak(words)))
+    timers.start(lambda words: (print(f"\n*** {words}"), tts.speak(words)),
+                 tts.ring_once)
     print("Type a question (or press Enter to quit).\n")
 
     while True:

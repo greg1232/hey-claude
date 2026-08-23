@@ -87,6 +87,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/brain.py` | Asks Claude and gets the answer |
 | `src/tools.py` | The things it can actually do — timers, weather, search |
 | `src/timers.py` | Timers and alarms, and the ringing |
+| `src/lights.py` | The LED ring on the array, showing what it's doing |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
@@ -127,9 +128,54 @@ something waits for the answer to finish. It has to: the microphone array
 is one device, and a chime during the recording gets transcribed as a word
 in the middle of the question.
 
+**A finished timer rings for thirty seconds**, and says the wake word is
+how you stop it. The ringing is broken into short beeps with two and a half
+second gaps, and the gaps are the point: while the speaker is playing,
+incoming audio is thrown away so it can't hear itself, so a timer that rang
+solidly for half a minute would be deaf for the whole of it. Catching the
+wake word in a gap isn't guaranteed — the wake word wants a two second
+window and only the tail of each gap is clear. The hard guarantee is the
+other end: it always stops itself after `RING_SECONDS`.
+
 **Alarms survive a reboot, timers don't.** Somebody who sets a seven
 o'clock alarm means it. A ten minute timer is about something happening
 right now, and an hour later it's just confusing.
+
+### The LED ring
+
+The array has twelve LEDs round it, and they say what the speaker is doing:
+
+| | |
+|---|---|
+| dark | waiting for the wake word |
+| blue | listening to your question |
+| blue, breathing | thinking about it |
+| green | talking back |
+| red, fast | a timer is going off |
+
+Sound can't do this job on its own. The beep says it woke up, but it can't
+keep saying it's *still* listening, and it can't say anything at all while
+you're talking — which is exactly when you want to know.
+
+`src/lights.py` speaks the array's USB protocol directly: a vendor control
+transfer, request 0, wValue the command, wIndex the resource. The whole LED
+interface is five commands, which is a lot less than Seeed's 1.8 MB
+`xvf_host` binary or their 400-line script. The firmware runs the
+animations itself, so a breathing ring costs one USB message rather than a
+thread here redrawing it.
+
+The array's USB node belongs to root, so this needs a udev rule to work
+without sudo — `./deploy.sh` installs one (the same bargain as the systemd
+user service: hand the thing to a group the user is already in, rather than
+becoming root). Without the rule you get one "Access denied" line and the
+lights stay off; everything else works. That's the rule for this whole
+file, in fact. A voice assistant should not stop working because a light
+didn't.
+
+```
+LEDS=off
+LED_BRIGHTNESS=40
+```
 
 ### Web search
 

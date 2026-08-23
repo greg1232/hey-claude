@@ -229,6 +229,30 @@ def install_packages(pi: Pi) -> None:
            tty=True)
 
 
+# The LED ring is driven over raw USB, and the array's USB node belongs to
+# root. This hands it to the plugdev group, which the Pi's own user is
+# already in — so the speaker can light its own lights without being root,
+# the same bargain as the systemd user service.
+UDEV_RULE = ('SUBSYSTEM=="usb", ATTR{idVendor}=="2886", '
+             'ATTR{idProduct}=="001a", MODE="0660", GROUP="plugdev"')
+UDEV_PATH = "/etc/udev/rules.d/60-respeaker.rules"
+
+
+def allow_led_access(pi: Pi) -> None:
+    """Let the speaker talk to the LED ring without sudo."""
+    if pi.output(f"cat {UDEV_PATH} 2>/dev/null").strip() == UDEV_RULE:
+        indent("already allowed")
+        return
+
+    indent("adding a udev rule for the microphone array's LEDs")
+    # Re-triggering beats asking anyone to unplug the array; without it the
+    # rule only takes effect at the next boot.
+    pi.run(f"echo '{UDEV_RULE}' | sudo tee {UDEV_PATH} >/dev/null"
+           " && sudo udevadm control --reload-rules"
+           " && sudo udevadm trigger --subsystem-match=usb"
+           " --attr-match=idVendor=2886", tty=True)
+
+
 def copy_code(pi: Pi) -> None:
     pi.run(f"mkdir -p ~/{REMOTE_DIR}", quiet=True)
     # Plain flags only: macOS still ships rsync 2.6.9, which doesn't know
@@ -405,6 +429,9 @@ def main() -> int:
     else:
         step("Installing system packages (sudo may ask for the Pi's password)")
         install_packages(pi)
+
+        step("Letting the speaker drive the array's LED ring")
+        allow_led_access(pi)
 
     step("Copying the code")
     copy_code(pi)

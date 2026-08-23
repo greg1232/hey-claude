@@ -40,3 +40,7 @@ requests>=2.31.0
 # the Raspberry Pi has nothing, so it speaks with Piper. About 63 MB per
 # voice, downloaded the first time it talks.
 piper-tts>=1.7.0; sys_platform == "linux"
+
+# Talks to the LED ring on the reSpeaker microphone array, over USB. Only
+# used on the Pi; on a laptop it finds no array and the lights stay off.
+pyusb

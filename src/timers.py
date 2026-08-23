@@ -33,6 +33,7 @@ from datetime import date as date_type
 from datetime import datetime, timedelta
 
 import config
+import lights
 
 # Where alarms are kept between runs. Deliberately outside the code, so
 # deploying doesn't overwrite them and git never sees them.
@@ -41,6 +42,11 @@ STATE_FILE = config.PROJECT_ROOT / "state" / "alarms.json"
 # Enough for a kitchen; few enough that "cancel everything" is never scary.
 MAX_PENDING = 12
 
+# How long to listen between beeps. Just over the two seconds the wake word
+# needs, so a gap can hold a whole "hey Claude" with the beep before it out
+# of the way.
+GAP_SECONDS = 2.5
+
 # Held by main.py for the length of a turn. A ring waits for it.
 turn = threading.RLock()
 
@@ -48,7 +54,13 @@ _lock = threading.Lock()
 _pending: list[dict] = []
 _next_id = 1
 _announce = None
+_ring_once = None
 _thread: threading.Thread | None = None
+
+# True while something is actually ringing. main.py hushes it the moment
+# somebody says the wake word.
+ringing = threading.Event()
+_hushed = threading.Event()
 
 
 # --- setting them -----------------------------------------------------------
@@ -179,10 +191,16 @@ def listing_locked() -> str:
 # --- going off --------------------------------------------------------------
 
 
-def start(announce) -> None:
-    """Begin watching the clock. `announce` says one line out loud."""
-    global _announce, _thread
+def start(announce, ring=None) -> None:
+    """Begin watching the clock.
+
+    `announce` says one line out loud; `ring` plays one burst of the alarm.
+    They're passed in rather than imported so this file can be tested, and
+    read, without any sound hardware in the room.
+    """
+    global _announce, _ring_once, _thread
     _announce = announce
+    _ring_once = ring
     _load()
     if _thread is None:
         _thread = threading.Thread(target=_watch, daemon=True)
@@ -211,7 +229,7 @@ def _watch() -> None:
 
 
 def _ring(item: dict) -> None:
-    """Say that one timer is up, once nothing else is talking."""
+    """Ring, and say what for, once nothing else is talking."""
     if item["kind"] == "timer":
         words = f"Your {item['spoken']} timer is done."
     elif item["label"]:
@@ -222,8 +240,64 @@ def _ring(item: dict) -> None:
     # Wait for any question in flight to be finished with, so the ring
     # doesn't talk over the answer or get recorded into the next question.
     with turn:
-        if _announce is not None:
-            _announce(words)
+        _hushed.clear()
+        ringing.set()
+        lights.show("ringing")
+        try:
+            # Beep first, then say what it was — the way a phone does it.
+            # The sound is what carries from the next room; the sentence is
+            # for whoever is standing here.
+            _burst()
+            if _announce is not None:
+                _announce(words)
+            _keep_ringing()
+        finally:
+            ringing.clear()
+            lights.show("idle")
+
+
+def _keep_ringing() -> None:
+    """Beep every few seconds until it's been long enough, or somebody says so.
+
+    The gaps are the point. While the speaker is playing, incoming audio is
+    thrown away so it can't hear itself, which means a timer that rang
+    solidly for half a minute would be deaf for the whole of it — and
+    "hey Claude, stop" would have to wait for the alarm to give up on its
+    own. So it beeps briefly and then listens for a couple of seconds, over
+    and over, and the wake word gets a chance in each gap.
+
+    That chance isn't a certainty: the wake word needs a two second window
+    and only the tail of each gap is clear of the beep before it. The hard
+    guarantee is the other end — it stops by itself after RING_SECONDS,
+    whatever happens.
+    """
+    deadline = time.monotonic() + config.RING_SECONDS
+    while time.monotonic() < deadline:
+        # Long enough for someone to get a word in, and the rhythm an oven
+        # timer uses anyway.
+        if _hushed.wait(GAP_SECONDS):
+            return
+        if time.monotonic() >= deadline:
+            return
+        _burst()
+
+
+def _burst() -> None:
+    """One beep-beep, if there's anything to play it with."""
+    if _ring_once is not None:
+        _ring_once()
+
+
+def hush() -> bool:
+    """Stop a ring in progress. True if something was actually ringing.
+
+    Called the instant the wake word is heard, before the beep, so that
+    saying "hey Claude" to a ringing timer shuts it up rather than talking
+    over it.
+    """
+    was_ringing = ringing.is_set()
+    _hushed.set()
+    return was_ringing
 
 
 # --- remembering them -------------------------------------------------------
@@ -305,7 +379,10 @@ if __name__ == "__main__":
         print(__doc__)
         raise SystemExit
 
-    start(lambda words: print(f"\n  *** {words} ***"))
-    print(add_timer(5, "test"))
-    print("Waiting...")
-    time.sleep(7)
+    import tts
+
+    start(lambda words: (print(f"\n  *** {words} ***"), tts.speak(words)),
+          tts.ring_once)
+    print(add_timer(3, "test"))
+    print(f"Waiting — it rings for {config.RING_SECONDS:.0f} seconds...")
+    time.sleep(config.RING_SECONDS + 6)
