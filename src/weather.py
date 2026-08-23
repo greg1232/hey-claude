@@ -20,6 +20,8 @@ import time
 
 import requests
 
+import sys
+
 import config
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -178,6 +180,10 @@ def start() -> None:
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
     if not config.LOCATION:
         raise SystemExit(
             "LOCATION isn't set, so the speaker has no weather.\n"

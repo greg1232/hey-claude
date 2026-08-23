@@ -107,3 +107,12 @@ def find_model(name: str) -> Path | None:
     raise SystemExit(
         f"Can't find the wake word model {name!r}.\n"
         "Train one with:  python train/train_whisper_wake.py")
+
+
+if __name__ == "__main__":
+    import sys
+
+    print(__doc__)
+    if not {"-h", "--help"} & set(sys.argv):
+        print("To hear how it scores your voice:\n"
+              "    python train/test_wake.py models/hey_claude_whisper.npz")

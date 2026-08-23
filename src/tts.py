@@ -350,6 +350,10 @@ def list_devices() -> None:
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
     if "--devices" in sys.argv:
         list_devices()
         raise SystemExit

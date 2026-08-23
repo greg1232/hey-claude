@@ -87,6 +87,10 @@ def run_text_mode() -> None:
 
 
 def main() -> None:
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        return
+
     text_mode = "--text" in sys.argv
 
     try:

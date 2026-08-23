@@ -71,7 +71,10 @@ python src/brain.py          # 2. type a question, hear Claude answer
 python src/audio_in.py       # 3. record you until you stop talking
 python src/stt.py            # 4. record you and print what it heard
 python src/wake.py           # 5. wake up three times, then stop
+python src/config.py         #    print every setting it will actually use
 ```
+
+Every script takes `--help`, including the ones in `train/`.
 
 ## The files
 

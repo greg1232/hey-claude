@@ -10,6 +10,8 @@ so it only happens once.
 
 import numpy as np
 
+import sys
+
 import config
 
 _model = None
@@ -47,6 +49,10 @@ def transcribe(audio: np.ndarray) -> str:
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
     # Quick check: record a sentence and print what it heard.
     import audio_in
 

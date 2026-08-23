@@ -16,6 +16,8 @@ import time
 import numpy as np
 import sounddevice as sd
 
+import sys
+
 import config
 import tts
 
@@ -232,7 +234,10 @@ def loudness(chunk: np.ndarray) -> float:
 
 
 if __name__ == "__main__":
-    import sys
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
 
     if "--devices" in sys.argv:
         list_devices()

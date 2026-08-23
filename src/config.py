@@ -116,3 +116,21 @@ WAKE_THRESHOLD = float(_get("WAKE_THRESHOLD", "0.5"))
 # Shorter costs proportionally more compute for slightly less delay.
 # Ignored by openWakeWord models, which score every 80 ms chunk.
 WAKE_STRIDE_SECONDS = float(_get("WAKE_STRIDE_SECONDS", "0.4"))
+
+
+if __name__ == "__main__":
+    # Print what the speaker will actually use, which is not always what you
+    # think you set — .env overrides these, and a typo in a name is silent.
+    import sys
+
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
+    print(f"Settings, as read from {PROJECT_ROOT / '.env'}:\n")
+    for name, value in sorted(globals().items()):
+        if name.isupper() and isinstance(value, (str, int, float)):
+            # Never print the key, only whether there is one.
+            if "API_KEY" in name:
+                value = f"<{len(str(value))} characters>" if value else "<not set>"
+            print(f"  {name:22s} {value!r}")

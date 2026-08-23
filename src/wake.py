@@ -22,6 +22,8 @@ Nothing else has to change.
 
 from pathlib import Path
 
+import sys
+
 import config
 from audio_in import Microphone
 from config import PROJECT_ROOT
@@ -168,6 +170,10 @@ def make_waker():
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
     # Quick check: wake up three times, then stop.
     waker = make_waker()
     print(f"Ready — {waker.label}. (Ctrl-C to stop.)")

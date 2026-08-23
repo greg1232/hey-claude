@@ -335,6 +335,12 @@ def run_trainer() -> None:
 
 
 def main() -> None:
+    # openWakeWord's trainer reads sys.argv itself and has no --help of its
+    # own, so asking for help would start a training run.
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        return
+
     if "--generate_clips" in sys.argv:
         raise SystemExit(
             "Don't use --generate_clips on a Mac — it needs piper-sample-generator,\n"

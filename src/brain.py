@@ -9,6 +9,8 @@ from pathlib import Path
 
 import anthropic
 
+import sys
+
 import config
 import weather
 
@@ -235,6 +237,10 @@ def _text_of(response) -> str:
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv):
+        print(__doc__)
+        raise SystemExit
+
     # Step 2 of the build order: type a question, hear Claude answer.
     import tts
 
