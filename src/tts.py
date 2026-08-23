@@ -87,11 +87,16 @@ def turn_up() -> None:
     if MACOS or not config.OUTPUT_VOLUME.strip():
         return
 
+    level = config.OUTPUT_VOLUME.strip().rstrip("%") + "%"
+
+    # PipeWire is a gain stage too, and a quiet one by default: its sink
+    # sat at 0.40, which is 8 dB, on top of the card's own 23. Turning the
+    # hardware up while a software mixer holds it down achieves nothing.
+    _turn_pipewire_up(level)
+
     card = _output_card()
     if card is None:
         return
-
-    level = config.OUTPUT_VOLUME.strip().rstrip("%") + "%"
     try:
         contents = subprocess.run(
             ["amixer", "-c", card, "contents"],
@@ -109,11 +114,31 @@ def turn_up() -> None:
         )
 
 
-def _output_card() -> str | None:
-    """The ALSA card number behind OUTPUT_DEVICE, for amixer to talk to.
+def _turn_pipewire_up(level: str) -> None:
+    """Take PipeWire's own volume out of the way."""
+    try:
+        subprocess.run(
+            ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@",
+             f"{int(level.rstrip('%')) / 100:.2f}"],
+            capture_output=True, check=False)
+    except OSError:
+        pass  # No wpctl. Not worth failing over.
 
-    PortAudio's device numbers and ALSA's card numbers are different things,
-    so this reads `aplay -l` rather than reusing find_output_device().
+
+def _output_card() -> str | None:
+    """The ALSA card number to turn up, for amixer to talk to.
+
+    PortAudio's device numbers and ALSA's card numbers are different
+    things, so this reads `aplay -l` rather than reusing
+    find_output_device().
+
+    OUTPUT_DEVICE names what to play through, which since PipeWire went in
+    is "pipewire" — a name that appears in no `aplay -l` line, so this
+    quietly returned None and the array's own mixer stopped being turned
+    up at all. It had reverted to 37 of 60, which is 23 dB down, and with
+    PipeWire's sink at 0.40 on top of it the speaker was 31 dB quieter than
+    it had been. So when the setting names a software device, ask PipeWire
+    which card its output actually lands on.
     """
     import re
 
@@ -124,11 +149,26 @@ def _output_card() -> str | None:
         return None
 
     wanted = config.OUTPUT_DEVICE.strip().lower()
+    if wanted in ("pipewire", "pulse", "default", "sysdefault"):
+        wanted = (_card_behind_pipewire() or "").lower()
+
     for line in listing.splitlines():
         match = re.match(r"card (\d+):", line)
         if match and (not wanted or wanted in line.lower()):
             return match.group(1)
     return None
+
+
+def _card_behind_pipewire() -> str | None:
+    """The name of the sound card PipeWire's default sink plays through."""
+    try:
+        told = subprocess.run(
+            ["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    found = re.search(r'alsa\.card_name\s*=\s*"([^"]+)"', told)
+    return found.group(1) if found else None
 
 
 def hush() -> bool:

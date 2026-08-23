@@ -170,3 +170,17 @@ thread ahead      4.13s
 ```
 SENTENCE_PAUSE=0.12
 ```
+
+**Two volume controls, not one.** The array arrives attenuated — 37 of 60,
+where 60 is 0 dB — and since PipeWire went in there is a second gain stage
+in front of it, which sits at 0.40 by default. `turn_up()` sets both at
+every startup, because neither reliably survives a reboot and a speaker
+that goes quiet when the power blinks is worse than one that was never
+loud.
+
+That was a bug for a while. `OUTPUT_DEVICE` is `pipewire` now, which
+appears in no `aplay -l` line, so the code that found the card to turn up
+quietly returned nothing and stopped turning anything up. The array
+reverted to 37 of 60 and PipeWire held its sink at 0.40 — together 31 dB
+down, about thirty five times quieter. It asks PipeWire which card its
+output actually lands on now.
