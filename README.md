@@ -92,7 +92,7 @@ python src/wake.py           # 5. wake up three times, then stop
 | `train/evaluate.py` | Scores a wake word on data it never saw |
 | `train/test_wake.py` | Checks it hears you |
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
-| `deploy.sh` | Puts the whole thing on a Raspberry Pi |
+| `deploy.py` | Puts the whole thing on a Raspberry Pi (`./deploy.sh` runs it) |
 
 Only `brain.py` and `weather.py` use the internet. The microphone, the wake
 word, and the speech recognition all run on the laptop.
