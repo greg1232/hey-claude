@@ -404,10 +404,20 @@ judging on 143 firings a person listened to, plus 75 the machine
 labelled to cover the other answer
 ```
 
-The human half only grows, so two runs a week apart can be compared. The
-way to make the number trustworthy is to label clips that *are* the wake
-word — which needs firings with audio, and until recently there weren't
-any.
+The human half only grows, so two runs a week apart can be compared.
+
+Getting human "yes" labels turns out to be the hard part, and for a reason
+that took a while to see. Of the four hundred recordings the Pi keeps,
+three hundred and twelve were near misses: the periodic sample writes one
+every few minutes, which is four hundred and eighty a day into a four
+hundred clip budget, and it was quietly evicting every recording of the
+wake word actually firing — the only clips that can ever be labelled yes.
+Those samples now keep the vector, which is what training needs, and not
+the audio, which nobody was ever going to listen to.
+
+The calibration clips can't fill the gap either: they are already known
+positives, they have negative numbers, and they are deliberately never
+saved. `./label.sh` says so now, having once reported them as saved.
 
 First archive:
 

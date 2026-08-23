@@ -97,7 +97,14 @@ def consider(waker, score: float) -> None:
         # those too, or the log only ever sees the ones that ended well.
         if now - _last_sample >= config.WAKE_NEAR_EVERY:
             _last_sample = now
-            _write(vector, audio, score, near=True)
+            # The vector, but not the audio. This fires every few minutes
+            # all day, which is four hundred and eighty clips into a four
+            # hundred clip budget — it was evicting every recording of the
+            # wake word actually firing, which are the ones worth
+            # listening to and the only ones that can ever be labelled
+            # "yes" by a person. The vector is what training needs and
+            # costs 1.5 kB; nobody was ever going to listen to these.
+            _write(vector, None, score, near=True)
     except Exception as error:
         print(f"[wake log] {type(error).__name__}: {error}")
 
@@ -208,7 +215,7 @@ def outcome(number: int, heard: str, answered: bool) -> None:
         print(f"[wake log] {type(error).__name__}: {error}")
 
 
-def teach(vector, audio, label: int, why: str) -> None:
+def teach(vector, audio, label: int, why: str, source: str = "") -> None:
     """Add an example that was never a firing — somebody taught it directly.
 
     Enrolment goes through here rather than straight into the trainer, so
@@ -220,9 +227,14 @@ def teach(vector, audio, label: int, why: str) -> None:
     try:
         number = _write(vector, audio, 1.0 if label else 0.0)
         with _lock, open(INDEX, "a") as handle:
-            handle.write(json.dumps({
-                "n": number, "label": int(label), "why": why,
-                "taught": True}) + "\n")
+            row = {"n": number, "label": int(label), "why": why,
+                   "taught": True}
+            if source:
+                # Which recording this came from, so that somebody
+                # listening to that recording later can confirm it and
+                # have the answer land on this row.
+                row["source"] = source
+            handle.write(json.dumps(row) + "\n")
     except Exception as error:
         print(f"[wake log] {type(error).__name__}: {error}")
 

@@ -182,8 +182,15 @@ def _usefulness(row: dict) -> int:
     to find them. Ordinary near misses are the room being a room.
     """
     if not row.get("near"):
-        return 0 if row.get("label") is None else 1
-    return 2 if row.get("repeated") else 3
+        # A firing the machine believes was real comes first. Of two
+        # hundred and three answers a person has given, two hundred and
+        # two were "no" — which measures false wakes and says nothing at
+        # all about recall. Confirming a likely yes is the most valuable
+        # thing anybody can do here, and there are only a handful.
+        if row.get("label") == 1:
+            return 0
+        return 1 if row.get("label") is None else 2
+    return 3 if row.get("repeated") else 4
 
 
 def marked() -> tuple[int, int]:
@@ -211,7 +218,7 @@ def push(pi: str) -> int:
     if done.returncode != 0:
         print(f"Couldn't save to the Pi:\n{done.stderr.strip()}")
         return 0
-    return len(_answers)
+    return len(real)
 
 
 def peak_of(clip: Path) -> int:
@@ -450,12 +457,12 @@ def main() -> int:
 
     right, asked = marked()
     if asked:
-        print(f"Of {asked} clips that really were the wake word, "
-              f"you said yes to {right}.")
+        print(f"Of {asked} clips that really were the wake word, you said "
+              f"yes to {right}. Those are\nmixed in to check the answers "
+              "and are not saved — they were already known.")
         if right < asked:
             print("  The ones you missed are worth hearing again — either "
-                  "they are hard,\n  or it was time to stop. Run "
-                  "./label.sh again whenever.")
+                  "they are hard,\n  or it was time to stop.")
 
     sent = push(pi)
     print(f"Saved {sent} answer{'s' if sent != 1 else ''} to the Pi."

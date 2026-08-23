@@ -140,7 +140,7 @@ WAKE_LOG = _get("WAKE_LOG", "on").lower() not in ("off", "0", "false", "no")
 # How many recordings of firings to keep. The 768 numbers are kept forever
 # — they're what retraining needs — but the audio is 64 kB a time on an SD
 # card, so only the most recent are held on to.
-WAKE_LOG_CLIPS = int(_get("WAKE_LOG_CLIPS", "400"))
+WAKE_LOG_CLIPS = int(_get("WAKE_LOG_CLIPS", "1500"))
 
 # Also write down windows that came close but didn't fire — the times
 # somebody said it and nothing happened. Logging only what fires teaches

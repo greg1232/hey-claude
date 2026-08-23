@@ -149,9 +149,9 @@ def _run(mic, waker, say) -> None:
         return
     print(f"  kept {len(kept)} that resemble each other")
 
-    save(kept)
-    for vector, window in zip(vectors, kept):
-        wake_log.teach(vector, window, 1, f"enrolled:{_who}")
+    names = save(kept)
+    for vector, window, name in zip(vectors, kept, names):
+        wake_log.teach(vector, window, 1, f"enrolled:{_who}", source=name)
 
     say(f"Got {len(kept)}. Give me a moment to learn them.")
     extra = augment(waker, kept, quiet_parts(audio))
@@ -395,18 +395,21 @@ def augment(waker, segments: list[np.ndarray],
     return out
 
 
-def save(segments: list[np.ndarray]) -> None:
+def save(segments: list[np.ndarray]) -> list[str]:
     """Keep the audio, so a full retrain can use it later too."""
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     KEPT.mkdir(parents=True, exist_ok=True)
+    names = []
     for i, segment in enumerate(segments):
         path = KEPT / f"{_who}-{stamp}-{i:02d}.wav"
+        names.append(path.name)
         with wave.open(str(path), "wb") as out:
             out.setnchannels(1)
             out.setsampwidth(2)
             out.setframerate(config.SAMPLE_RATE)
             out.writeframes(segment.tobytes())
     print(f"  kept the audio in {KEPT}")
+    return names
 
 
 def relearn() -> str:
