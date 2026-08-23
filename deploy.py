@@ -306,13 +306,33 @@ def install_service(pi: Pi) -> None:
     indent(pi.output("systemctl is-active claude-speaker"))
 
 
+def service_enabled(pi: Pi) -> bool:
+    return pi.run("systemctl is-enabled --quiet claude-speaker",
+                  check=False, quiet=True).returncode == 0
+
+
 def restart_if_running(pi: Pi) -> None:
-    """Copying files onto the Pi doesn't change what's already running."""
-    if pi.run("systemctl is-active --quiet claude-speaker",
-              check=False, quiet=True).returncode == 0:
+    """Copying files onto the Pi doesn't change what's already running.
+
+    Asks whether systemd is *enabled* rather than active. A service that's
+    enabled but stopped still owns the speaker — starting a loose one
+    beside it means two processes competing for a microphone that allows
+    one, and the loose one disappears at the next reboot.
+    """
+    if service_enabled(pi):
         step("Restarting the service so it picks this up")
-        pi.run("sudo systemctl restart claude-speaker", tty=True)
-        indent("restarted")
+        # sudo wants a password, and there isn't always someone to type it —
+        # this gets run from scripts too. Say what's needed instead of
+        # ending the whole deploy on it, because everything before this
+        # point already succeeded.
+        if pi.run("sudo systemctl restart claude-speaker", tty=True,
+                  check=False).returncode != 0:
+            indent("couldn't restart it — the new code is on the Pi but the "
+                   "running speaker\nis still the old one. Finish with:\n"
+                   f"    ssh -t {pi.target} sudo systemctl restart "
+                   "claude-speaker")
+            return
+        indent(pi.output("systemctl is-active claude-speaker"))
     elif pi.run('pgrep -f "[s]rc/main.py" >/dev/null',
                 check=False, quiet=True).returncode == 0:
         step("Restarting the speaker so it picks this up")
@@ -375,10 +395,13 @@ def main() -> int:
         restart_if_running(pi)
 
     print("\nDeployed.\n")
-    if args.service:
-        print("It's running now and will start again on every boot.\n")
+    if args.service or service_enabled(pi):
+        print("systemd is looking after it, and starts it on every boot.\n")
         print(f"  Watch it:     ssh {pi.target} journalctl -u claude-speaker -f")
-        print(f"  Stop it:      ssh {pi.target} sudo systemctl stop claude-speaker")
+        print(f"  Restart it:   ssh -t {pi.target} sudo systemctl restart claude-speaker")
+        print(f"  Stop it:      ssh -t {pi.target} sudo systemctl stop claude-speaker")
+        print(f"  Type instead: ssh -t {pi.target} 'cd {REMOTE_DIR} && "
+              "sudo systemctl stop claude-speaker && ./start.sh --text'")
     else:
         print(f"  Start it:     ssh {pi.target} 'cd {REMOTE_DIR} && ./start.sh'")
         print(f"  Watch it:     ssh {pi.target} 'tail -f {REMOTE_DIR}/speaker.log'")

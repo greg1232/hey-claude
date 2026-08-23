@@ -31,6 +31,33 @@ LOG = HERE / "speaker.log"
 PIDFILE = HERE / "speaker.pid"
 
 KEY_URL = "https://console.anthropic.com/settings/keys"
+SERVICE = "claude-speaker"
+
+
+def managed_by_systemd() -> bool:
+    """Is systemd looking after the speaker on this machine?
+
+    If it is, this script must keep its hands off. Starting a second one
+    here would fight it for the microphone, and stopping one by killing the
+    process leaves systemd thinking it exited cleanly — enabled, inactive,
+    and not coming back until the next reboot. Which is exactly what
+    happened the first time ./deploy.sh --service was used.
+    """
+    if not Path("/run/systemd/system").exists():
+        return False
+    state = subprocess.run(["systemctl", "is-enabled", SERVICE],
+                           capture_output=True, text=True).stdout.strip()
+    return state in ("enabled", "enabled-runtime", "static", "linked")
+
+
+def systemd_hint(action: str) -> int:
+    active = subprocess.run(["systemctl", "is-active", SERVICE],
+                            capture_output=True, text=True).stdout.strip()
+    print(f"systemd is looking after the speaker (currently {active}).")
+    print(f"Use it, or the two will fight over the microphone:\n")
+    print(f"    sudo systemctl {action} {SERVICE}")
+    print(f"    journalctl -u {SERVICE} -f")
+    return 1
 
 
 def speaker_pid() -> int | None:
@@ -51,6 +78,8 @@ def speaker_pid() -> int | None:
 
 
 def stop() -> int:
+    if managed_by_systemd():
+        return systemd_hint("stop")
     pid = speaker_pid()
     if pid is None:
         PIDFILE.unlink(missing_ok=True)
@@ -72,6 +101,15 @@ def stop() -> int:
 
 
 def status() -> int:
+    if managed_by_systemd():
+        active = subprocess.run(["systemctl", "is-active", SERVICE],
+                                capture_output=True, text=True).stdout.strip()
+        pid = speaker_pid()
+        print(f"Looked after by systemd: {active}"
+              + (f", pid {pid}" if pid else ""))
+        print(f"  log:  journalctl -u {SERVICE} -f")
+        print(f"  stop: sudo systemctl stop {SERVICE}")
+        return 0
     pid = speaker_pid()
     if pid is None:
         print("Not running.")
@@ -129,6 +167,9 @@ def check_settings() -> None:
 
 
 def start_daemon(extra: list[str]) -> int:
+    if managed_by_systemd():
+        return systemd_hint("start")
+
     # Only one at a time. On a microphone array, playing and listening are
     # the same piece of hardware and it allows a single stream, so a second
     # speaker doesn't share the microphone — it fails, or quietly steals it.
