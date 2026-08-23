@@ -1,6 +1,15 @@
 # Claude Speaker — Design
 
-*Source: hand-drawn design sketches (`design1.png`, `design2.png`) in the project root.*
+*Source: hand-drawn design sketches (`design1.png`, `design2.png`) in the
+project root.*
+
+> **This is the original plan, kept as it was written.** It is a record of
+> what was intended before any of it existed, not a description of what the
+> speaker does now — several of its guesses turned out wrong, which is the
+> interesting part. Notably it puts Spotify out of scope, and its list of
+> files is about a third of the ones that exist today.
+>
+> For what the speaker actually is, start at the [README](../README.md).
 
 ## 1. What we're building
 
