@@ -100,6 +100,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/music.py` | Spotify — search, play, skip, volume |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
+| `src/wishes.py` | Writes down what it was asked for and can't do |
 | **Training and setup** | |
 | `train/record_wake.py` | Records people saying the wake word |
 | `train/record_room.py` | Records the room not saying it |
@@ -111,6 +112,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh` runs it) |
+| `wishes.py` | Reads the wishes off the Pi (`./wishes.sh` runs it) |
 
 Only `brain.py`, `weather.py`, `effects.py`, `books.py` and `music.py` use
 the internet. The microphone, the wake word, the speech recognition and the
@@ -129,6 +131,7 @@ voice all run on the machine itself.
 "hey claude, read me Treasure Island"
 "hey claude, play Baby Shark"
 "hey claude, learn my voice"
+"hey claude, can you keep score for our game"    <- writes down a wish
 ```
 
 Each is a tool. See **[docs/capabilities.md](docs/capabilities.md)** for

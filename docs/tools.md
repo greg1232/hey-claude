@@ -125,3 +125,43 @@ python src/tools.py
 
 Prints every tool, its description, and the line Claude is told about what
 the speaker can do.
+
+## When there is no tool
+
+The most useful thing that happens to this project is a child asking for
+something the speaker cannot do. It is a feature request from the only
+person whose opinion counts, in his own words, at the moment he wanted it —
+and those used to vanish into "sorry, I can't do that yet".
+
+`make_a_wish` writes them down. On the laptop:
+
+```
+./wishes.sh
+```
+
+Repeats are folded together and counted, loosely enough that "keep score in
+a card game" and "keeping the score for a game" are one wish rather than
+two. A thing asked for five times is five times as interesting.
+
+Two things the speaker has to say, not one: that it can't do it *and* that
+it has written it down. A child told a flat no stops asking, and asking is
+the useful part. That instruction lives in `brain.py`, because the first
+version had it only in the tool description and Claude refused the bedroom
+light politely without writing anything down.
+
+## Why the speaker doesn't build its own tools
+
+It could. This file is close to a specification a machine can meet, and it
+is: given a paragraph and told to read this document, Claude Code wrote
+`src/scores.py` — four tools, `says` line, state persisted, a name added to
+`FEATURES` — in a sandbox, on the first try, and it worked.
+
+What stops it being wired up is the television. It reaches the speaker's
+transcript about fifty times an hour, and every one of those is a sentence
+somebody else wrote being read aloud to a machine. The path from "something
+was said in this room" to "code was written and run" has to be broken by
+something a broadcast cannot cross, and the only reliable such thing is a
+person reading a diff.
+
+So the speaker's entire power here is to write a line to a file. Everything
+that can execute lives somewhere it cannot reach.
