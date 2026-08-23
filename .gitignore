@@ -12,6 +12,10 @@ voices/
 # Which Pi ./deploy.sh last sent to — local to your machine.
 .deploy-target
 
+# Whatever the speaker printed while it was running, and its pidfile.
+*.log*
+*.pid
+
 # Model caches that get downloaded automatically.
 # models/ is NOT ignored — a wake word you trained yourself belongs in the
 # project, and it's only about a megabyte.

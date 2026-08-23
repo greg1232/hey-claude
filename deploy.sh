@@ -105,6 +105,10 @@ fi
 # Everything the speaker needs, and nothing it doesn't: no git history, no
 # virtualenv built for a different CPU, no training data, and no .env —
 # that one goes separately, with tighter permissions.
+#
+# Logs and the pidfile are excluded too. rsync --delete removes anything at
+# the far end that isn't here, and wiping the log on every deploy would
+# throw away the record of whatever you were about to investigate.
 echo
 echo "==> Copying the code"
 ssh "$TARGET" "mkdir -p ~/$REMOTE_DIR"
@@ -122,6 +126,8 @@ rsync -az --delete \
   --exclude 'train/voices/' \
   --exclude 'train/hey_claude/' \
   --exclude '*.png' \
+  --exclude '*.log*' \
+  --exclude '*.pid' \
   --exclude '.DS_Store' \
   ./ "$TARGET:$REMOTE_DIR/"
 echo "    code, models/ and start.sh copied"
@@ -295,11 +301,9 @@ if [ "$INSTALL_SERVICE" = false ]; then
     echo "==> Restarting the service so it picks this up"
     ssh -t "$TARGET" 'sudo systemctl restart claude-speaker' && echo "    restarted"
   elif ssh "$TARGET" 'pgrep -f "[s]rc/main.py" >/dev/null' 2>/dev/null; then
-    echo "==> A speaker is already running the old code"
-    echo "    Stop and start it to pick this up:"
-    echo "      ssh $TARGET 'pkill -f \"[s]rc/main.py\"'"
-    echo "    Or install it as a service, which handles this for you:"
-    echo "      ./deploy.sh --service"
+    echo "==> Restarting the speaker so it picks this up"
+    ssh "$TARGET" "cd ~/$REMOTE_DIR && ./start.sh --stop && ./start.sh" \
+      | sed 's/^/    /'
   fi
 fi
 
@@ -314,7 +318,9 @@ if [ "$INSTALL_SERVICE" = true ]; then
   echo "  Stop it:      ssh $TARGET sudo systemctl stop claude-speaker"
   echo "  Restart it:   ssh $TARGET sudo systemctl restart claude-speaker"
 else
-  echo "  Try it:       ssh -t $TARGET 'cd $REMOTE_DIR && ./start.sh'"
+  echo "  Start it:     ssh $TARGET 'cd $REMOTE_DIR && ./start.sh'"
+  echo "  Watch it:     ssh $TARGET 'tail -f $REMOTE_DIR/speaker.log'"
+  echo "  Stop it:      ssh $TARGET 'cd $REMOTE_DIR && ./start.sh --stop'"
   echo "  Type instead: ssh -t $TARGET 'cd $REMOTE_DIR && ./start.sh --text'"
   echo "  On every boot: ./deploy.sh --service"
 fi

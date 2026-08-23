@@ -57,7 +57,9 @@ python src/main.py           # the real thing — say the wake word
 python src/main.py --text    # type questions instead of speaking them
 ```
 
-Press Ctrl-C to stop.
+Press Ctrl-C to stop. On a Raspberry Pi, use `./start.sh` instead — it runs
+in the background and writes a log. See
+[Putting it on a Raspberry Pi](#putting-it-on-a-raspberry-pi).
 
 ## Trying one piece at a time
 
@@ -166,6 +168,43 @@ Two settings are rewritten on the way over, because the Pi isn't a Mac:
 Everything else — your key, your town, the wake word — carries over as is.
 To write the Pi's settings by hand instead, make a `.env.pi` file and that
 gets sent untouched.
+
+### Starting it, and where it prints to
+
+```bash
+cd ~/claude-speaker
+./start.sh              # start it in the background
+./start.sh --status     # is it running, and where's the log
+./start.sh --stop       # stop it
+tail -f speaker.log     # watch what it hears and says
+```
+
+`./start.sh` returns straight away, so closing the terminal or dropping the
+SSH connection doesn't take the speaker with it. Everything it prints goes
+to `speaker.log` in the project folder, unbuffered, so `tail -f` shows each
+question as it's asked rather than in a lump twenty minutes later. The
+previous run is kept as `speaker.log.1` — when something dies overnight,
+the restart is what you notice, and it mustn't erase the reason.
+
+It won't start twice. On a microphone array, playing and listening are the
+same piece of hardware and it allows a single stream, so a second speaker
+doesn't share the microphone — it fails, or quietly steals it.
+
+Two other ways to run it, both staying in your terminal:
+
+```bash
+./start.sh --foreground   # watch it directly, Ctrl-C to stop
+./start.sh --text         # type questions instead of speaking them
+```
+
+`./deploy.sh` restarts a running speaker for you, so deployed code actually
+takes effect. For it to come back after a power cut, install it as a
+service — then it logs to the journal instead:
+
+```bash
+./deploy.sh --service
+ssh you@your-pi journalctl -u claude-speaker -f
+```
 
 ### The microphone array
 

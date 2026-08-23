@@ -33,7 +33,12 @@ def run_voice_mode() -> None:
 
     with audio_in.Microphone() as mic:
         silence_level = mic.measure_noise_floor()
-        print(f"\nReady — {waker.label}. Press Ctrl-C to stop.\n")
+        # Ctrl-C is only an answer if someone is looking at a terminal. When
+        # this is running in the background its output goes to a log, and
+        # telling the reader to press a key there is just confusing.
+        stop = ("Press Ctrl-C to stop." if sys.stdout.isatty()
+                else "Stop it with ./start.sh --stop")
+        print(f"\nReady — {waker.label}. {stop}\n")
 
         while True:
             # 1. Wait to be woken up.
