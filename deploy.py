@@ -75,8 +75,9 @@ OUTPUT_DEVICE=Array
 OUTPUT_VOLUME=100
 
 # The wake word, and how sure it has to be. The right threshold depends on
-# the microphone and the room, so measure yours:
-#     python train/evaluate.py models/<model> --sweep
+# the microphone and the room, so measure yours on the Pi itself:
+#     python train/test_wake.py --times 6
+#     python train/test_silence.py --seconds 600
 WAKE_MODEL=hey_claude_whisper.npz
 WAKE_THRESHOLD=0.99
 

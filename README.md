@@ -92,7 +92,6 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/record_wake.py` | Records people saying the wake word |
 | `train/record_room.py` | Records the room not saying it |
 | `train/train_whisper_wake.py` | Trains the wake word |
-| `train/evaluate.py` | Scores a wake word on data it never saw |
 | `train/test_wake.py` | Checks it hears you |
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
 | `deploy.py` | Puts the whole thing on a Raspberry Pi (`./deploy.sh` runs it) |
@@ -204,10 +203,13 @@ python train/test_wake.py models/hey_claude_whisper.npz --times 6
 python train/test_silence.py models/hey_claude.onnx --seconds 180
 ```
 
-**To train an openWakeWord model instead**, see
-[docs/training-hey-claude.md](docs/training-hey-claude.md) — about 5 GB of
-downloads and 80 minutes, and you never have to say the phrase yourself.
-`models/hey_claude-96.onnx` is the best one this project produced.
+**The openWakeWord models are still here** — `models/hey_claude.onnx` (also
+on the Hub as [gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude))
+and `models/hey_claude-96.onnx`, the best one this project produced. Either
+still loads if you set `WAKE_MODEL` to it. The pipeline that trained them —
+5 GB of downloads, 80 minutes, and 2,200 lines — was removed once the
+Whisper wake word beat it on every measurement. It's in the git history if
+you want it back.
 
 Other options, both in `.env`:
 

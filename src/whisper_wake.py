@@ -56,6 +56,7 @@ class WhisperWakeDetector:
         self._features = self._whisper.feature_extractor
         self._samples = int(self._window * config.SAMPLE_RATE)
         self._buffer = np.zeros(self._samples, dtype=np.int16)
+        self._next_look = 0.0
 
         phrase = model_path.stem.split("_whisper")[0].split("-")[0]
         self.label = f"say '{phrase.replace('_', ' ')}'"
@@ -74,25 +75,37 @@ class WhisperWakeDetector:
         """Add audio to the rolling window, oldest falling off the front."""
         self._buffer = np.concatenate([self._buffer, chunk])[-self._samples:]
 
+    def observe(self, chunk: np.ndarray) -> float | None:
+        """Feed 80 ms of audio. Returns a score, or None if it isn't due.
+
+        The two wake words disagree about how often they can answer —
+        openWakeWord scores every chunk, this one every stride, because a
+        Whisper encoder pass is 131 ms and a chunk is 80 ms. Both answer the
+        same question, so the tools that measure them don't have to care.
+        """
+        self.push(chunk)
+        now = time.monotonic()
+        if now < self._next_look:
+            return None
+        self._next_look = now + config.WAKE_STRIDE_SECONDS
+        return self.score(self._buffer)
+
+    def reset(self) -> None:
+        self._buffer[:] = 0
+        self._next_look = time.monotonic() + config.WAKE_STRIDE_SECONDS
+
     def wait_for_wake(self, mic) -> bool:
         """Block until the wake word is heard. Returns False on Ctrl-C."""
-        self._buffer[:] = 0
+        self.reset()
         mic.flush()
-        next_look = time.monotonic() + config.WAKE_STRIDE_SECONDS
 
         while True:
             chunk = mic.read(timeout=1.0)
             if chunk is None:
                 continue
-            self.push(chunk)
-
-            now = time.monotonic()
-            if now < next_look:
-                continue
-            next_look = now + config.WAKE_STRIDE_SECONDS
-
-            if self.score(self._buffer) >= config.WAKE_THRESHOLD:
-                self._buffer[:] = 0
+            score = self.observe(chunk)
+            if score is not None and score >= config.WAKE_THRESHOLD:
+                self.reset()
                 return True
 
 

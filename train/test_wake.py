@@ -5,7 +5,7 @@ is talking"; this one asks "does it fire when somebody is", which is the
 half you notice when you're stood in front of it saying "hey Claude" for
 the fourth time.
 
-    python train/test_wake.py models/hey_claude.onnx --times 6
+    python train/test_wake.py --times 6
 
 Say the wake word when it tells you to, then stay quiet. It reports the
 best score for each attempt, and what threshold would have caught them all.
@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("model", help="path to the .onnx wake word")
     parser.add_argument("--times", type=int, default=6,
                         help="how many attempts to ask for")
     parser.add_argument("--listen", type=float, default=3.0,
@@ -37,19 +36,18 @@ def main() -> int:
 
     import audio_in
     import config
-    from openwakeword.model import Model
-    import openwakeword.utils
+    import wake
 
-    openwakeword.utils.download_models(model_names=[])
-    print(f"Loading {args.model} ...")
-    model = Model(wakeword_models=[args.model], inference_framework="onnx")
+    waker = wake.make_waker()
+    if not hasattr(waker, "observe"):
+        raise SystemExit("WAKE_MODE=key has nothing to measure.")
 
     best_per_try = []
     with audio_in.Microphone() as mic:
         print(f"\nSay the wake word {args.times} times, once per prompt.\n")
         for attempt in range(1, args.times + 1):
             mic.flush()
-            model.reset()
+            waker.reset()
             print(f"  {attempt}/{args.times}  say it now... ", end="", flush=True)
 
             best, loudest = 0.0, 0.0
@@ -59,7 +57,9 @@ def main() -> int:
                 if chunk is None:
                     continue
                 loudest = max(loudest, audio_in.loudness(chunk))
-                best = max(best, max(model.predict(chunk).values()))
+                score = waker.observe(chunk)
+                if score is not None:
+                    best = max(best, score)
 
             best_per_try.append(best)
             heard = "silent" if loudest < 200 else f"level {loudest:.0f}"
@@ -86,8 +86,8 @@ def main() -> int:
     print(f"\n  To catch all {len(scores)}, WAKE_THRESHOLD needs to be about "
           f"{suggested} or lower.")
     print("  Check that against a quiet room before trusting it:")
-    print(f"      python train/test_silence.py {args.model} "
-          f"--seconds 180 --threshold {suggested}")
+    print(f"      python train/test_silence.py --seconds 180 "
+          f"--threshold {suggested}")
     print("  Lowering the threshold trades missed wakes for false ones, and")
     print("  the only way to know the price is to measure both.")
     return 1

@@ -88,8 +88,8 @@ def main() -> int:
     room = np.array(levels) if levels else np.zeros(1)
     print(f"\n\n  saved {saved} clips to {args.out}")
     print(f"  room level: {room.mean():.0f} RMS average, {room.max():.0f} peak")
-    print("\n  Add them to the negatives and retrain:")
-    print("      python train/add_room_clips.py")
+    print("\n  Copy them to the machine you train on, and retrain:")
+    print("      python train/train_whisper_wake.py")
     return 0 if saved else 1
 
 

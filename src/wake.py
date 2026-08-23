@@ -11,7 +11,8 @@ Pick with WAKE_MODE in .env: auto (default), key, or openwakeword.
 
 A note on "Hey Claude": openWakeWord ships a few pre-trained wake words
 (hey_jarvis, alexa, hey_mycroft) but not "Hey Claude" — you have to train
-that one yourself. See docs/training-hey-claude.md for how.
+that one yourself — and the one this project ships isn't an openWakeWord
+model at all. See src/whisper_wake.py.
 
 Once you have the trained file, drop it in models/ and set this in .env:
 
@@ -86,10 +87,21 @@ class WakeWordDetector:
         self._model = Model(wakeword_models=[to_load], inference_framework="onnx")
         self.label = f"say '{phrase.replace('_', ' ')}'"
 
-    def wait_for_wake(self, mic: Microphone) -> bool:
-        """Block until the wake word is heard. Returns False on Ctrl-C."""
+    def observe(self, chunk) -> float | None:
+        """Feed 80 ms of audio and get back a score. Never None here.
+
+        The same method the Whisper wake word has, so test_wake.py and
+        test_silence.py can measure either without knowing which is loaded.
+        """
+        return max(self._model.predict(chunk).values())
+
+    def reset(self) -> None:
         # Forget anything heard before now, so an old score can't fire.
         self._model.reset()
+
+    def wait_for_wake(self, mic: Microphone) -> bool:
+        """Block until the wake word is heard. Returns False on Ctrl-C."""
+        self.reset()
         mic.flush()
 
         while True:
@@ -97,9 +109,9 @@ class WakeWordDetector:
             if chunk is None:
                 continue  # Nothing arriving right now — keep waiting.
 
-            scores = self._model.predict(chunk)
-            if any(score >= config.WAKE_THRESHOLD for score in scores.values()):
-                self._model.reset()
+            score = self.observe(chunk)
+            if score is not None and score >= config.WAKE_THRESHOLD:
+                self.reset()
                 return True
 
 
