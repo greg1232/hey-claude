@@ -91,23 +91,31 @@ WAKE_STRIDE_SECONDS=0.4
 WHISPER_MODEL=tiny.en
 """
 
+# A user service, not a system one, so deploying never needs a password.
+# systemctl --user needs no sudo, and `loginctl enable-linger` — which the
+# user can also run for themselves — is what makes it start at boot without
+# anyone logging in. The speaker has no reason to be root: it needs the
+# audio group, which the user is already in, and PipeWire is running in
+# their session anyway.
+#
+# Restart=always rather than on-failure, because at boot the network may
+# not be up yet and the first question would fail. Retrying costs nothing.
 SERVICE = """[Unit]
 Description=Claude Speaker
-After=network-online.target sound.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User={user}
-WorkingDirectory=/home/{user}/{dir}
-ExecStart=/home/{user}/{dir}/.venv/bin/python src/main.py
+WorkingDirectory=%h/{dir}
+ExecStart=%h/{dir}/.venv/bin/python src/main.py
 Environment=PYTHONUNBUFFERED=1
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 """
+
+UNIT_PATH = ".config/systemd/user/claude-speaker.service"
 
 
 def step(message: str) -> None:
@@ -298,17 +306,46 @@ if config.OUTPUT_DEVICE and not any(
 """.replace("BUSY", str(busy))))
 
 
-def install_service(pi: Pi) -> None:
-    pi.run(f"sudo tee /etc/systemd/system/claude-speaker.service >/dev/null "
-           f"<<'UNIT'\n{SERVICE.format(user=pi.user, dir=REMOTE_DIR)}UNIT\n"
-           "sudo systemctl daemon-reload && "
-           "sudo systemctl enable --now claude-speaker", tty=True)
-    indent(pi.output("systemctl is-active claude-speaker"))
+def install_service(pi: Pi) -> bool:
+    """Set it to start on boot, without ever asking for a password.
+
+    Returns whether it's now installed.
+    """
+    # An older version of this installed a system service. Two managers is
+    # worse than either, so say so rather than quietly running both.
+    if pi.output("test -f /etc/systemd/system/claude-speaker.service "
+                 "&& echo yes"):
+        indent("There's an old system-wide service here from a previous\n"
+               "version. Remove it, once, and this will never need sudo "
+               "again:\n"
+               f"    ssh -t {pi.target} 'sudo systemctl disable --now "
+               "claude-speaker && sudo rm "
+               "/etc/systemd/system/claude-speaker.service'")
+        return False
+
+    pi.run(f"mkdir -p ~/{Path(UNIT_PATH).parent} && "
+           f"cat > ~/{UNIT_PATH} <<'UNIT'\n"
+           f"{SERVICE.format(dir=REMOTE_DIR)}UNIT", quiet=True)
+    # Lingering is what lets a user service run with nobody logged in.
+    pi.run("loginctl enable-linger && systemctl --user daemon-reload && "
+           "systemctl --user enable --now claude-speaker", quiet=True)
+    indent(pi.output("systemctl --user is-active claude-speaker"))
+    indent("starts on every boot, no password needed")
+    return True
 
 
-def service_enabled(pi: Pi) -> bool:
-    return pi.run("systemctl is-enabled --quiet claude-speaker",
-                  check=False, quiet=True).returncode == 0
+def service_scope(pi: Pi) -> str | None:
+    """'--user', '' for a system unit, or None if there isn't one.
+
+    Both, because this project used to install a system-wide unit. A Pi
+    part way between the two has the old one and not the new, and treating
+    that as unmanaged starts a second speaker beside it.
+    """
+    for scope in ("--user", ""):
+        if pi.run(f"systemctl {scope} is-enabled --quiet claude-speaker",
+                  check=False, quiet=True).returncode == 0:
+            return scope
+    return None
 
 
 def restart_if_running(pi: Pi) -> None:
@@ -319,20 +356,18 @@ def restart_if_running(pi: Pi) -> None:
     beside it means two processes competing for a microphone that allows
     one, and the loose one disappears at the next reboot.
     """
-    if service_enabled(pi):
+    scope = service_scope(pi)
+    if scope is not None:
         step("Restarting the service so it picks this up")
-        # sudo wants a password, and there isn't always someone to type it —
-        # this gets run from scripts too. Say what's needed instead of
-        # ending the whole deploy on it, because everything before this
-        # point already succeeded.
-        if pi.run("sudo systemctl restart claude-speaker", tty=True,
-                  check=False).returncode != 0:
-            indent("couldn't restart it — the new code is on the Pi but the "
-                   "running speaker\nis still the old one. Finish with:\n"
-                   f"    ssh -t {pi.target} sudo systemctl restart "
-                   "claude-speaker")
+        sudo = "" if scope == "--user" else "sudo "
+        if pi.run(f"{sudo}systemctl {scope} restart claude-speaker",
+                  tty=bool(sudo), check=False, quiet=not sudo).returncode != 0:
+            indent("couldn't restart it — the code is on the Pi but the "
+                   "running speaker is\nstill the old one. Finish with:\n"
+                   f"    ssh -t {pi.target} '{sudo}systemctl {scope} restart "
+                   "claude-speaker'")
             return
-        indent(pi.output("systemctl is-active claude-speaker"))
+        indent(pi.output(f"systemctl {scope} is-active claude-speaker"))
     elif pi.run('pgrep -f "[s]rc/main.py" >/dev/null',
                 check=False, quiet=True).returncode == 0:
         step("Restarting the speaker so it picks this up")
@@ -388,20 +423,21 @@ def main() -> int:
     step("Checking the sound hardware")
     check_sound(pi)
 
+    running_as_service = service_scope(pi) is not None
     if args.service:
         step("Setting it to start on boot")
-        install_service(pi)
+        running_as_service = install_service(pi) or running_as_service
     else:
         restart_if_running(pi)
 
     print("\nDeployed.\n")
-    if args.service or service_enabled(pi):
+    if running_as_service:
         print("systemd is looking after it, and starts it on every boot.\n")
-        print(f"  Watch it:     ssh {pi.target} journalctl -u claude-speaker -f")
-        print(f"  Restart it:   ssh -t {pi.target} sudo systemctl restart claude-speaker")
-        print(f"  Stop it:      ssh -t {pi.target} sudo systemctl stop claude-speaker")
+        print(f"  Watch it:     ssh {pi.target} journalctl --user-unit=claude-speaker -f")
+        print(f"  Restart it:   ssh {pi.target} systemctl --user restart claude-speaker")
+        print(f"  Stop it:      ssh {pi.target} systemctl --user stop claude-speaker")
         print(f"  Type instead: ssh -t {pi.target} 'cd {REMOTE_DIR} && "
-              "sudo systemctl stop claude-speaker && ./start.sh --text'")
+              "systemctl --user stop claude-speaker && ./start.sh --text'")
     else:
         print(f"  Start it:     ssh {pi.target} 'cd {REMOTE_DIR} && ./start.sh'")
         print(f"  Watch it:     ssh {pi.target} 'tail -f {REMOTE_DIR}/speaker.log'")

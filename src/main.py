@@ -11,6 +11,7 @@ Run it with:
     python src/main.py --text     type questions instead of speaking them
 """
 
+import os
 import sys
 
 import audio_in
@@ -33,11 +34,16 @@ def run_voice_mode() -> None:
 
     with audio_in.Microphone() as mic:
         mic.measure_noise_floor()  # Listen for a moment before saying ready.
-        # Ctrl-C is only an answer if someone is looking at a terminal. When
-        # this is running in the background its output goes to a log, and
-        # telling the reader to press a key there is just confusing.
-        stop = ("Press Ctrl-C to stop." if sys.stdout.isatty()
-                else "Stop it with ./start.sh --stop")
+        # Say how to stop *this* speaker. Ctrl-C is only an answer if
+        # somebody is looking at a terminal; ./start.sh --stop is only an
+        # answer if this wasn't started by systemd, which sets
+        # INVOCATION_ID and refuses to be stopped that way.
+        if sys.stdout.isatty():
+            stop = "Press Ctrl-C to stop."
+        elif os.environ.get("INVOCATION_ID"):
+            stop = "Stop it with systemctl --user stop claude-speaker"
+        else:
+            stop = "Stop it with ./start.sh --stop"
         print(f"\nReady — {waker.label}. {stop}\n")
 
         while True:

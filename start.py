@@ -45,18 +45,34 @@ def managed_by_systemd() -> bool:
     """
     if not Path("/run/systemd/system").exists():
         return False
-    state = subprocess.run(["systemctl", "is-enabled", SERVICE],
-                           capture_output=True, text=True).stdout.strip()
-    return state in ("enabled", "enabled-runtime", "static", "linked")
+    # Either kind counts. The project used to install a system-wide unit
+    # and now installs a user one, so a machine part way between the two
+    # has the old one and not the new — and looking only for the new one
+    # would start a rival beside it.
+    return bool(service_scope())
+
+
+def service_scope() -> list[str] | None:
+    """["--user"], [] for a system unit, or None if there's no unit."""
+    for scope in (["--user"], []):
+        state = subprocess.run(["systemctl", *scope, "is-enabled", SERVICE],
+                               capture_output=True, text=True).stdout.strip()
+        if state in ("enabled", "enabled-runtime", "static", "linked"):
+            return scope
+    return None
 
 
 def systemd_hint(action: str) -> int:
-    active = subprocess.run(["systemctl", "is-active", SERVICE],
+    scope = service_scope() or ["--user"]
+    active = subprocess.run(["systemctl", *scope, "is-active", SERVICE],
                             capture_output=True, text=True).stdout.strip()
+    where = " ".join(scope)
+    sudo = "" if scope == ["--user"] else "sudo "
     print(f"systemd is looking after the speaker (currently {active}).")
-    print(f"Use it, or the two will fight over the microphone:\n")
-    print(f"    sudo systemctl {action} {SERVICE}")
-    print(f"    journalctl -u {SERVICE} -f")
+    print("Use it, or the two will fight over the microphone:\n")
+    print(f"    {sudo}systemctl {where} {action} {SERVICE}".replace("  ", " "))
+    print(f"    journalctl --user-unit={SERVICE} -f" if scope == ["--user"]
+          else f"    journalctl -u {SERVICE} -f")
     return 1
 
 
@@ -102,13 +118,17 @@ def stop() -> int:
 
 def status() -> int:
     if managed_by_systemd():
-        active = subprocess.run(["systemctl", "is-active", SERVICE],
+        scope = service_scope() or ["--user"]
+        active = subprocess.run(["systemctl", *scope, "is-active", SERVICE],
                                 capture_output=True, text=True).stdout.strip()
+        where = " ".join(scope)
+        sudo = "" if scope == ["--user"] else "sudo "
         pid = speaker_pid()
-        print(f"Looked after by systemd: {active}"
+        print(f"Looked after by systemd ({where or 'system-wide'}): {active}"
               + (f", pid {pid}" if pid else ""))
-        print(f"  log:  journalctl -u {SERVICE} -f")
-        print(f"  stop: sudo systemctl stop {SERVICE}")
+        print(f"  log:  journalctl --user-unit={SERVICE} -f" if scope == ["--user"]
+              else f"  log:  journalctl -u {SERVICE} -f")
+        print(f"  stop: {sudo}systemctl {where} stop {SERVICE}".replace("  ", " "))
         return 0
     pid = speaker_pid()
     if pid is None:

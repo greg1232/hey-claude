@@ -274,12 +274,22 @@ Two other ways to run it, both staying in your terminal:
 
 `./deploy.sh` restarts a running speaker for you, so deployed code actually
 takes effect. For it to come back after a power cut, install it as a
-service — then it logs to the journal instead:
+service:
 
 ```bash
 ./deploy.sh --service
-ssh you@your-pi journalctl -u claude-speaker -f
+ssh you@your-pi journalctl --user-unit=claude-speaker -f
+ssh you@your-pi systemctl --user restart claude-speaker
 ```
+
+It's a **user** service, not a system one, so none of this needs a
+password. `systemctl --user` doesn't need root, and `loginctl
+enable-linger` — which you can also run for yourself — is what makes it
+start at boot with nobody logged in. The speaker has no reason to be root:
+it needs the audio group, which you're already in.
+
+The only thing that ever wants `sudo` is installing system packages on a
+brand new Pi, which happens once. `./deploy.sh --no-apt` skips even that.
 
 ### The microphone array
 
