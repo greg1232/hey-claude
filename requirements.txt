@@ -44,3 +44,6 @@ piper-tts>=1.7.0; sys_platform == "linux"
 # Talks to the LED ring on the reSpeaker microphone array, over USB. Only
 # used on the Pi; on a laptop it finds no array and the lights stay off.
 pyusb
+
+# Decodes the ogg, mp3 and flac that sound-effect libraries hand back.
+soundfile

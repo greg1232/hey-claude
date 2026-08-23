@@ -48,7 +48,11 @@ KEPT = config.PROJECT_ROOT / "state" / "enrolled"
 # How long to listen for repetitions once they've started, and how much
 # quiet means they've finished.
 LISTEN_SECONDS = 25.0
-DONE_AFTER_QUIET = 2.5
+DONE_AFTER_QUIET = 3.0
+# And however quiet it goes, don't call it finished before this much has
+# been recorded. Somebody pausing to think between the second and third
+# repetition is not somebody who has stopped.
+LEAST_RECORDED = 5.0
 # And how long to wait for them to begin at all. Somebody who has just been
 # told what to do takes a moment to draw breath, and the whole thing used
 # to give up during that breath.
@@ -128,7 +132,7 @@ def _run(mic, waker, say) -> None:
         say("I didn't hear anything at all. Ask me again when you're ready.")
         return
 
-    segments = cut_up(audio, mic.noise_floor())
+    segments = cut_up(audio)
     print(f"  found {len(segments)} candidate repetitions")
     if len(segments) < 3:
         say("I only caught a couple of those. Try again, a bit louder, "
@@ -150,7 +154,7 @@ def _run(mic, waker, say) -> None:
         wake_log.teach(vector, window, 1, f"enrolled:{_who}")
 
     say(f"Got {len(kept)}. Give me a moment to learn them.")
-    extra = augment(waker, kept, quiet_parts(audio, mic.noise_floor()))
+    extra = augment(waker, kept, quiet_parts(audio))
     print(f"  and {len(extra)} more by moving them about in the room noise")
     for vector in extra:
         wake_log.teach(vector, None, 1, f"enrolled:{_who}:moved")
@@ -207,18 +211,27 @@ def listen(mic) -> np.ndarray:
 
         chunks.append(chunk)
         quiet = 0.0 if loud else quiet + chunk_seconds
-        if quiet >= DONE_AFTER_QUIET:
+        if quiet >= DONE_AFTER_QUIET \
+                and len(chunks) * chunk_seconds >= LEAST_RECORDED:
             break
 
     return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
 
 
-def cut_up(audio: np.ndarray, floor: float) -> list[np.ndarray]:
+def cut_up(audio: np.ndarray) -> list[np.ndarray]:
     """Find each repetition, and return two seconds centred on it.
 
     Two seconds because that is the window the detector scores, and a
     phrase learned without the room around it isn't the thing it will be
     asked to recognise.
+
+    The cutoff between speech and room comes from this recording and
+    nothing else. It used to come from the microphone's rolling
+    thirty-second noise floor, which is right for deciding when somebody
+    has stopped talking and wrong here: that window had just been filled
+    with somebody talking, so its median rose, and three times the median
+    landed above the very speech it was meant to find. It reported zero
+    repetitions in a recording that plainly had several.
     """
     from audio_in import loudness
 
@@ -228,6 +241,9 @@ def cut_up(audio: np.ndarray, floor: float) -> list[np.ndarray]:
     if not louds.size:
         return []
 
+    # Most of a recording of somebody repeating a short phrase is the gaps
+    # between, so the quiet third of it is the room.
+    floor = max(250.0, float(np.percentile(louds, 33)) * 3.0)
     speaking = louds >= floor
     runs, start = [], None
     for i, on in enumerate(speaking):
@@ -248,6 +264,10 @@ def cut_up(audio: np.ndarray, floor: float) -> list[np.ndarray]:
         else:
             joined.append(list(run))
     joined = [tuple(r) for r in joined]
+    print(f"  cutoff {floor:.0f} (quiet {np.percentile(louds, 33):.0f}, "
+          f"loudest {louds.max():.0f}); bursts of "
+          + ", ".join(f"{(b - a) * step / config.SAMPLE_RATE:.2f}s"
+                      for a, b in joined[:12]))
 
     window = int(2.0 * config.SAMPLE_RATE)
     out = []
@@ -318,7 +338,7 @@ def embed(waker, segments: list[np.ndarray]):
 OFFSETS = 6
 
 
-def quiet_parts(audio: np.ndarray, floor: float) -> np.ndarray:
+def quiet_parts(audio: np.ndarray) -> np.ndarray:
     """The room in between the repetitions.
 
     The recording brings its own backgrounds, which is the neat part: the
@@ -329,8 +349,13 @@ def quiet_parts(audio: np.ndarray, floor: float) -> np.ndarray:
     from audio_in import loudness
 
     step = config.BLOCK_SIZE
-    quiet = [audio[i:i + step] for i in range(0, len(audio) - step, step)
-             if loudness(audio[i:i + step]) < floor]
+    louds = [loudness(audio[i:i + step])
+             for i in range(0, len(audio) - step, step)]
+    if not louds:
+        return audio
+    floor = max(250.0, float(np.percentile(louds, 33)) * 3.0)
+    quiet = [audio[i * step:(i + 1) * step]
+             for i, level in enumerate(louds) if level < floor]
     if len(quiet) * step < 2 * config.SAMPLE_RATE:
         return audio  # Barely any gaps — use the lot rather than nothing.
     return np.concatenate(quiet)

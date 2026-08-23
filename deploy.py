@@ -85,9 +85,14 @@ OUTPUT_VOLUME=100
 #       0.80              55%                   100%
 #       0.50              66%                   100%
 #
-# and no measurable change in false wakes anywhere across that range —
-# though those negatives were mined against this same model, so treat the
-# shape as the signal and not the absolute.
+# and no measurable change in false wakes anywhere across that range. That
+# last part turned out to be worthless: those negatives were mined against
+# this same model, and the real room disagreed loudly. At 0.80 it woke
+# roughly every twenty seconds with a television on — 108 an hour — so it
+# was nearly always mid-turn and could not hear anybody. Measured in the
+# room, the false wakes score HIGHER than the real ones (median 0.991
+# against 0.933), so there is no clean cut anywhere; the threshold only
+# buys rate, not separation.
 #
 # What makes a low threshold affordable is that a false wake is now silent:
 # nothing said means nothing spoken, and television speech gets (nothing)
@@ -97,7 +102,7 @@ OUTPUT_VOLUME=100
 #     python train/test_wake.py --times 6
 #     python src/wake_log.py
 WAKE_MODEL=hey_claude_whisper.npz
-WAKE_THRESHOLD=0.80
+WAKE_THRESHOLD=0.95
 
 # How often the Whisper wake word looks, in seconds. About 42% of one core
 # at 0.4 on a Pi 4. Raise it to spend less, and be noticed a little later.

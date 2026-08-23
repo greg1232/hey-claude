@@ -157,7 +157,12 @@ def find_model(name: str) -> Path | None:
     """Find a Whisper wake word file, or None if this isn't one."""
     if not name.endswith(".npz"):
         return None
-    for path in (Path(name), config.PROJECT_ROOT / name,
+    # state/ first. That is where relearn.py puts what this machine has
+    # learned from its own room, and deploy mirrors the project directory —
+    # so a model left in models/ would be overwritten by the shipped one on
+    # the next deploy, silently throwing away everything it had learned.
+    for path in (config.PROJECT_ROOT / "state" / Path(name).name,
+                 Path(name), config.PROJECT_ROOT / name,
                  config.PROJECT_ROOT / "models" / name):
         if path.is_file():
             return path.resolve()

@@ -18,6 +18,7 @@ Piper's voices:              https://rhasspy.github.io/piper-samples/
 """
 
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -236,6 +237,30 @@ def _play(device, rate: int, audio) -> None:
         _drain(stream)
 
 
+def play_clip(audio, rate: int) -> None:
+    """Play one lump of audio somebody found, at whatever rate it came at.
+
+    Used by effects.py. Goes through the same arbitration as speech: the
+    array is one device, so this takes the lock and steps the background
+    sounds aside, and sets `speaking` so the wake word can't hear a
+    bullfrog and wake up for it.
+    """
+    import numpy as np
+
+    import sounds
+
+    device = find_output_device(config.OUTPUT_DEVICE)
+    playable = playable_rate(device, rate)
+    samples = (np.asarray(audio, dtype=np.float32) * 32767).astype(np.int16)
+
+    with _device, sounds.paused():
+        speaking.set()
+        try:
+            _play(device, playable, _at_rate(samples, rate, playable))
+        finally:
+            speaking.clear()
+
+
 def _drain(stream) -> None:
     """Wait for the sound the card is still holding.
 
@@ -302,7 +327,7 @@ def _say_linux(text: str) -> None:
 
     def synthesise() -> None:
         try:
-            for chunk in voice.synthesize(text, settings):
+            for chunk in _synthesise(voice, text, settings):
                 # Resampling happens here too, on this thread, for the same
                 # reason: it is work, and work belongs off the path that is
                 # holding the speaker open.
@@ -333,6 +358,78 @@ def _say_linux(text: str) -> None:
             stream.write(piece)
         _drain(stream)
     worker.join(timeout=1.0)
+
+
+# How many words to let the first piece run to before breaking it, and the
+# ones after. The first is short because nothing is being said until it is
+# finished; the rest are longer because by then the speaker is talking and
+# there is time in hand, and because breaking a sentence costs prosody.
+FIRST_WORDS = 10
+LATER_WORDS = 28
+
+# Where a long sentence can be broken without it sounding wrong: after a
+# comma or semicolon, or before the word that starts a new clause.
+CLAUSE = re.compile(
+    r"(?<=[,;:])\s+|\s+(?=(?:and|but|or|so|because|which|while|then|"
+    r"although|though|since|after|before|when)\s)")
+
+
+def _synthesise(voice, text: str, settings):
+    """Make the audio, in pieces small enough to start on quickly.
+
+    Piper hands back one chunk per sentence and nothing is heard until the
+    first one is finished, so the length of the first sentence is the
+    length of the silence. Measured on a Pi: a sixty word sentence full of
+    ands took 5.88 seconds to produce its first sound. The same answer
+    beginning with a short sentence took 1.08.
+
+    Claude is asked to open briefly (see brain.py) but can't be relied on
+    to, so long sentences are broken at clause boundaries here. The break
+    costs a little prosody — each piece gets its own falling intonation —
+    which is why only the opening is cut short, and why the pieces after
+    it are allowed to run nearly three times as long.
+    """
+    for piece in _pieces(text):
+        yield from voice.synthesize(piece, settings)
+
+
+def _pieces(text: str) -> list[str]:
+    """Break an answer into what to synthesise, in order."""
+    out: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        if sentence.strip():
+            out.extend(_break_up(sentence, FIRST_WORDS if not out
+                                 else LATER_WORDS))
+    return out or [text]
+
+
+def _break_up(sentence: str, limit: int) -> list[str]:
+    """Cut one over-long sentence into pieces of about `limit` words."""
+    if len(sentence.split()) <= limit:
+        return [sentence]
+
+    pieces: list[str] = []
+    current = ""
+    for clause in CLAUSE.split(sentence):
+        candidate = f"{current} {clause}".strip() if current else clause
+        if current and len(candidate.split()) > limit:
+            pieces.append(current)
+            current = clause
+            limit = LATER_WORDS  # Only the opening has to be short.
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+
+    # A three word fragment on its own sounds like a stumble. Put any runt
+    # back with the piece before it.
+    tidy: list[str] = []
+    for piece in pieces:
+        if tidy and len(piece.split()) < 4:
+            tidy[-1] = f"{tidy[-1]} {piece}"
+        else:
+            tidy.append(piece)
+    return tidy
 
 
 def _trimmed(audio, rate: int):

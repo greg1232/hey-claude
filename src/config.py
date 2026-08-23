@@ -183,6 +183,12 @@ SOUND_VOLUME = float(_get("SOUND_VOLUME", "0.30"))
 # How long they play if nobody says. Hours.
 SOUND_HOURS = float(_get("SOUND_HOURS", "8"))
 
+# A key for Freesound, which is by far the better place to look up a
+# recording of a bullfrog. Free, from https://freesound.org/apiv2/apply/.
+# Without one it falls back to Wikimedia Commons, which needs no account
+# and is noticeably worse at this.
+FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
+
 
 if __name__ == "__main__":
     # Print what the speaker will actually use, which is not always what you

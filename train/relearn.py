@@ -38,6 +38,11 @@ sys.path.insert(0, str(HERE.parent / "src"))
 import wake_log  # noqa: E402
 
 MODEL = HERE.parent / "models" / "hey_claude_whisper.npz"
+# What this machine learns for itself goes in state/, never in models/.
+# models/ is mirrored by deploy, so a model written there would be replaced
+# by the shipped one on the next deploy, taking every night of learning
+# with it. src/whisper_wake.py looks in state/ first.
+LEARNED = HERE.parent / "state" / "hey_claude_whisper.npz"
 
 
 def load_bank(path: Path):
@@ -84,6 +89,9 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     from sklearn.preprocessing import StandardScaler
 
     bank_X, bank_y, who = load_bank(model.with_suffix(".bank.npz"))
+    # Compare against whatever is actually running, which is the learned
+    # one if this machine has already learned something.
+    running = LEARNED if LEARNED.exists() else model
     log_X, log_y, _note = load_log()
 
     say(f"  bank: {len(bank_X)} features "
@@ -115,7 +123,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     # Score the old model and the new one on the same logged firings — the
     # only data that is unambiguously about this room. Anything the old one
     # got wrong here is exactly what this exercise is for.
-    old = np.load(model)
+    old = np.load(running)
     before = _probability(log_X, old["mean"], old["scale"],
                           old["coef"], float(old["intercept"]))
     after = _probability(log_X, scaler.mean_, scaler.scale_,
@@ -139,10 +147,12 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
         return "Nothing written."
 
     # Keep the one that is being replaced, so a bad night can be undone.
-    backup = model.with_suffix(".npz.previous")
-    backup.write_bytes(model.read_bytes())
+    LEARNED.parent.mkdir(parents=True, exist_ok=True)
+    backup = LEARNED.with_suffix(".npz.previous")
+    if LEARNED.exists():
+        backup.write_bytes(LEARNED.read_bytes())
 
-    np.savez(model,
+    np.savez(LEARNED,
              mean=scaler.mean_.astype(np.float32),
              scale=scaler.scale_.astype(np.float32),
              coef=clf.coef_[0].astype(np.float32),
@@ -150,7 +160,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
              whisper_model=str(old["whisper_model"]),
              window_seconds=np.float32(old["window_seconds"]),
              keep_frames=np.int32(old["keep_frames"]))
-    say(f"  wrote {model.name}, kept the old one as {backup.name}")
+    say(f"  wrote {LEARNED}")
     return (f"Learned from {len(log_X)} examples. "
             f"I now catch {caught_after:.0%} of the ones I have on file.")
 
