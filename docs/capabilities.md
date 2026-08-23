@@ -257,3 +257,45 @@ know rather than hanging.
 
 The point isn't reciting a forecast — it's questions like *"should I wear a
 coat?"*, which it can now actually answer.
+
+## Easter eggs
+
+Not written down anywhere the family can find, which is the point — see
+`src/eggs.py` if you need to know.
+
+```
+"hey claude, I am Groot"            answers only in Groot, for a few turns
+"hey claude, expecto patronum"      names your patronus, and plays it
+"hey claude, to infinity and…"      finishes the line
+"hey claude, do you want to
+ build a snowman"                   answers, then offers to play the song
+"hey claude, hakuna matata"         no worries — and cancels your timers
+"hey claude, flip-o-rama"           a paper flutter, and two frames narrated
+"hey claude, this is the way"       answers in kind, then talks like Mando
+"hey claude, I have spoken"         stops it dead, mid-sentence
+"hey claude, rubble on the double"  starts a timed mission, with a siren
+"hey claude, teach me something"    one fact, and the real sound of it
+```
+
+Two rules, from noticing which ones are actually fun.
+
+**The good ones do something.** "This is the way" said back is a nice
+moment. "I have spoken" stopping the speaker mid-sentence is a magic word
+that silences a machine, and a child will remember that for years. "Rubble
+on the double" is a tidying timer with a siren on it, which is a chore
+disguised as a rescue.
+
+**They have to be findable by accident.** Nobody reads a list of easter
+eggs. Somebody says a line they know, something happens, and the speaker
+becomes a place where saying film lines is rewarded.
+
+The sayable ones are data — a table in `src/eggs.py` that Claude is shown
+along with everything else it knows. The doing ones are two tools,
+`stop_everything` and `start_mission`, plus tools that already existed.
+
+`stop_everything` is worth having on its own: it stops talking, reading,
+music, background sound and a ringing timer, all at once. Speech is now
+cut off between tenth-of-a-second blocks rather than between sentences,
+because a sentence is one to three seconds and being interrupted three
+seconds later is not being interrupted. Measured: stopped at 1.5s into an
+answer that would have run 7.

@@ -171,7 +171,9 @@ def _system_prompt() -> str:
         "answer."
     )
     limits = LIMITS.format(can=tools.summary())
-    return "\n\n".join([SYSTEM_PROMPT, limits, MISHEARD, name, _now_block()])
+    import eggs
+    return "\n\n".join([SYSTEM_PROMPT, limits, MISHEARD, name,
+                         eggs.lines(), _now_block()])
 
 
 # How many times round the ask-Claude, run-a-tool loop before giving up.
@@ -233,6 +235,13 @@ class Brain:
         # used to add exactly one message and one pop undid it; a turn with
         # tools adds four or more.
         mark = len(self.messages)
+        # Whether anything was actually done this turn. A silent answer
+        # means two very different things: nobody was talking to us, or a
+        # tool did the whole job and there is nothing left to say. "I have
+        # spoken" stops the speaker and rightly says nothing back — and
+        # that was being written into the wake word's training data as a
+        # false wake, teaching it not to fire on somebody talking to it.
+        self.did_something = False
         self.messages.append({"role": "user", "content": question})
         self._forget_old_turns()
 
@@ -274,6 +283,7 @@ class Brain:
             if not wanted:
                 return _text_of(response)
 
+            self.did_something = True
             results = []
             for block in wanted:
                 print(f"[tool] {block.name} {block.input}")

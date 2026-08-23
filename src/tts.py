@@ -38,6 +38,13 @@ speaking = threading.Event()
 # unavailable".
 _device = threading.Lock()
 
+# Set to cut an answer off in the middle. The speaker checks it between
+# small blocks of audio rather than between sentences, because a sentence
+# is one to three seconds and being interrupted three seconds later is not
+# being interrupted.
+_hushed = threading.Event()
+_talking: "subprocess.Popen | None" = None
+
 MACOS = sys.platform == "darwin"
 
 # A short built-in macOS sound, used as the "I'm listening" beep.
@@ -124,11 +131,24 @@ def _output_card() -> str | None:
     return None
 
 
+def hush() -> bool:
+    """Stop talking, now. True if it was saying something."""
+    was = speaking.is_set()
+    _hushed.set()
+    if _talking is not None:
+        try:
+            _talking.terminate()
+        except Exception:
+            pass
+    return was
+
+
 def speak(text: str) -> None:
     """Say `text` out loud and wait until it finishes."""
     text = text.strip()
     if not text:
         return
+    _hushed.clear()
 
     with _device, sounds.paused():
         speaking.set()
@@ -300,10 +320,13 @@ def _drain(stream) -> None:
 
 
 def _say_macos(text: str) -> None:
-    subprocess.run(
-        ["say", "-v", config.VOICE, "-r", str(config.SPEECH_RATE), text],
-        check=False,
-    )
+    global _talking
+    _talking = subprocess.Popen(
+        ["say", "-v", config.VOICE, "-r", str(config.SPEECH_RATE), text])
+    try:
+        _talking.wait()
+    finally:
+        _talking = None
 
 
 # --- Linux -----------------------------------------------------------------
@@ -363,7 +386,7 @@ def _say_linux(text: str) -> None:
     with sd.OutputStream(samplerate=rate, channels=1, dtype="int16",
                          device=device) as stream:
         first = True
-        while True:
+        while not _hushed.is_set():
             piece = made.get()
             if piece is None:
                 break
@@ -373,8 +396,15 @@ def _say_linux(text: str) -> None:
             if not first and gap.size:
                 stream.write(gap)
             first = False
-            stream.write(piece)
-        _drain(stream)
+            # In blocks, not in one go, so hush() takes effect in a tenth
+            # of a second instead of at the end of the sentence.
+            step = max(1024, rate // 10)
+            for at in range(0, len(piece), step):
+                if _hushed.is_set():
+                    break
+                stream.write(np.ascontiguousarray(piece[at:at + step]))
+        if not _hushed.is_set():
+            _drain(stream)
     worker.join(timeout=1.0)
 
 

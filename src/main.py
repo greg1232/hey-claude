@@ -123,10 +123,19 @@ def run_voice_mode() -> None:
                     # 5. Ask Claude, then say the answer out loud.
                     answer = the_brain.ask(question)
                     if not answer:
-                        # Somebody was talking, but not to us — the television
-                        # again. Claude spotted it; see brain.SILENCE.
-                        print(f"(not for me: {question!r})")
-                        wake_log.outcome(firing, question, False)
+                        if the_brain.did_something:
+                            # A tool did the job and there is nothing to
+                            # say — "I have spoken" stops the speaker and
+                            # answering would defeat it. Somebody was
+                            # plainly talking to us, so it counts as real.
+                            print("(done, nothing to say)")
+                            wake_log.outcome(firing, question, True)
+                        else:
+                            # Somebody was talking, but not to us — the
+                            # television. Claude spotted it; see
+                            # brain.SILENCE.
+                            print(f"(not for me: {question!r})")
+                            wake_log.outcome(firing, question, False)
                         continue
                     wake_log.outcome(firing, question, True)
                     print(f"Claude: {answer}\n")

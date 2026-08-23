@@ -57,6 +57,15 @@ MOST = 10
 # plainly hasn't stopped.
 DUCK_TO = 0.2
 
+
+def _nothing_playing(error) -> bool:
+    """Spotify answers 404 when there is no active device.
+
+    That is the ordinary case for "stop the music" said in a quiet room,
+    and printing it as an error every time is noise in the log.
+    """
+    return "404" in str(error)
+
 _lock = threading.RLock()
 _token = ""
 _token_until = 0.0
@@ -294,7 +303,8 @@ def pause_music(what: str) -> str:
         _call("PUT", "/me/player/pause")
         return "Music paused."
     except Exception as error:
-        print(f"[music] {type(error).__name__}: {error}")
+        if not _nothing_playing(error):
+            print(f"[music] {type(error).__name__}: {error}")
         return "Nothing is playing."
 
 
@@ -313,7 +323,8 @@ def skip_music(which: str) -> str:
         time.sleep(0.6)   # Give Spotify a moment to load the next one.
         return f"Skipped. Now playing {now_playing()}."
     except Exception as error:
-        print(f"[music] {type(error).__name__}: {error}")
+        if not _nothing_playing(error):
+            print(f"[music] {type(error).__name__}: {error}")
         return "Nothing is playing."
 
 
