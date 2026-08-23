@@ -264,7 +264,12 @@ def from_freesound(search: str):
     query = urllib.parse.urlencode({
         "query": search,
         "filter": f"duration:[0.3 TO {LONGEST}]",
-        "sort": "rating_desc",
+        # Relevance, not rating. Sorting by rating asks for the best
+        # sounds that happen to match, which is not the same question: a
+        # search for "bowling" came back with highly rated coins and
+        # popcorn while three real bowling recordings sat further down.
+        # Claude gets the rating in the name and can weigh it itself.
+        "sort": "score",
         "fields": "name,previews,avg_rating,num_ratings,duration",
         "page_size": str(DEEP),
         "token": config.FREESOUND_KEY,
@@ -280,8 +285,9 @@ def from_freesound(search: str):
         preview = (hit.get("previews") or {}).get("preview-hq-mp3")
         if preview:
             rating = hit.get("avg_rating") or 0
+            seconds = hit.get("duration") or 0
             out.append((f"{hit.get('name', search)} "
-                        f"(freesound, rated {rating:.1f})", preview))
+                        f"(freesound, {seconds:.0f}s, rated {rating:.1f})", preview))
     return out
 
 
