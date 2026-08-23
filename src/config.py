@@ -68,6 +68,12 @@ PIPER_VOICE = _get("PIPER_VOICE", "en_GB-alan-medium")
 # machines — tts.py converts it for Piper.
 SPEECH_RATE = int(_get("SPEECH_RATE", "180"))
 
+# The gap between sentences, in seconds. Piper's own is about a fifth of a
+# second once the silence it leaves at both ends is added up, which sounds
+# slow read aloud. Trimmed and replaced with this, so the spacing is a
+# choice. Linux only — macOS `say` does its own pacing.
+SENTENCE_PAUSE = float(_get("SENTENCE_PAUSE", "0.12"))
+
 # How loud, as a percentage. USB speakers often arrive attenuated — the
 # reSpeaker array came set about 20 dB down, quiet enough that you reach for
 # the volume knob and find it already at maximum — so the speaker turns

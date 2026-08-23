@@ -17,6 +17,7 @@ Hear the macOS voices with:  say -v '?'
 Piper's voices:              https://rhasspy.github.io/piper-samples/
 """
 
+import queue
 import shutil
 import subprocess
 import sys
@@ -267,13 +268,80 @@ def _say_linux(text: str) -> None:
     native = voice.config.sample_rate
     rate = playable_rate(device, native)
 
-    # Piper hands back one chunk per sentence, so writing them out as they
-    # arrive means the speaker starts talking before the whole answer has
-    # been synthesised.
+    # Piper hands back one chunk per sentence, and making each one takes
+    # about six tenths of a second on a Pi — half as long as the sentence
+    # lasts. Written straight to the stream that time is dead air, because
+    # stream.write() blocks until the audio has played out, so nothing is
+    # being synthesised while anything is being said. That was the long
+    # pause after every full stop: not the voice taking a breath, the Pi
+    # thinking.
+    #
+    # So one thread makes the sound and another plays it. The next sentence
+    # is ready long before the current one finishes, and the only gap left
+    # is the one deliberately put there.
+    made: queue.Queue = queue.Queue(maxsize=4)
+
+    def synthesise() -> None:
+        try:
+            for chunk in voice.synthesize(text, settings):
+                # Resampling happens here too, on this thread, for the same
+                # reason: it is work, and work belongs off the path that is
+                # holding the speaker open.
+                made.put(_at_rate(_trimmed(chunk.audio_int16_array, native),
+                                  native, rate))
+        except Exception as error:
+            print(f"[voice] {type(error).__name__}: {error}")
+        finally:
+            made.put(None)
+
+    worker = threading.Thread(target=synthesise, daemon=True)
+    worker.start()
+
+    gap = np.zeros(int(rate * config.SENTENCE_PAUSE), dtype=np.int16)
     with sd.OutputStream(samplerate=rate, channels=1, dtype="int16",
                          device=device) as stream:
-        for chunk in voice.synthesize(text, settings):
-            stream.write(_at_rate(chunk.audio_int16_array, native, rate))
+        first = True
+        while True:
+            piece = made.get()
+            if piece is None:
+                break
+            # The pause goes before each sentence rather than after, so an
+            # answer ends the moment the last word does. Trailing silence
+            # here is silence with the microphone still muted.
+            if not first and gap.size:
+                stream.write(gap)
+            first = False
+            stream.write(piece)
+    worker.join(timeout=1.0)
+
+
+def _trimmed(audio, rate: int):
+    """Cut the silence off both ends of a sentence.
+
+    Piper leaves about a twentieth of a second at the front and up to a
+    seventh at the back, and between two sentences that adds up to a pause
+    nobody chose. Trimming both and putting back a known gap makes the
+    spacing a setting instead of an accident.
+
+    The threshold is a fraction of the sentence's own peak, so it follows a
+    loud sentence and a quiet one alike, and a little of the quiet is kept
+    at each end — cutting hard against a soft "s" or "th" is audible, and
+    sounds like a dropout rather than a shorter pause.
+    """
+    import numpy as np
+
+    if audio.size == 0:
+        return audio
+
+    loud = np.abs(audio) >= max(np.abs(audio).max() * 0.02, 32)
+    speaking_at = np.flatnonzero(loud)
+    if speaking_at.size == 0:
+        return audio  # All quiet — not ours to judge.
+
+    keep = int(rate * 0.02)
+    start = max(0, int(speaking_at[0]) - keep)
+    end = min(audio.size, int(speaking_at[-1]) + keep + 1)
+    return audio[start:end]
 
 
 def playable_rate(device, native: int) -> int:

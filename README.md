@@ -452,6 +452,28 @@ python src/tts.py --devices     # lists the speakers it can see
 That last one matters on a Pi: ALSA lists the HDMI outputs first, so the
 default is often a monitor rather than your actual speakers.
 
+
+**The pause between sentences.** Piper makes one chunk per sentence, and on
+a Pi each takes about six tenths of a second to make — half as long as the
+sentence lasts. Written straight to the sound device that time is dead air,
+because `stream.write()` blocks until the audio has played out, so nothing
+is being synthesised while anything is being said. That was the long pause
+after every full stop: not the voice taking a breath, the Pi thinking.
+
+One thread now makes the sound and another plays it, so the next sentence
+is ready well before the current one ends. The silence Piper leaves at both
+ends of a chunk is trimmed and replaced with a gap you choose. Measured on
+the Pi, a three sentence answer:
+
+```
+write-as-you-go   4.95s
+thread ahead      4.13s
+```
+
+```
+SENTENCE_PAUSE=0.12
+```
+
 ## When something goes wrong
 
 **It doesn't hear me / recording is silent.**
