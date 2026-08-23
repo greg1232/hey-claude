@@ -44,6 +44,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -60,7 +61,7 @@ SOUNDS_LIKE_HEY = re.compile(r"\b(hey|hi|hay|a|ok|okay)\b", re.IGNORECASE)
 BATCH = 20
 
 
-def transcribe_windows(firings: list[dict], size: str) -> None:
+def transcribe_windows(firings: list[dict], size: str, most: int) -> None:
     """Add `window` — what Whisper heard in the two seconds that fired.
 
     Deliberately a bigger model than the speaker runs. The Pi listens with
@@ -78,16 +79,28 @@ def transcribe_windows(firings: list[dict], size: str) -> None:
 
     todo = [f for f in firings
             if "window" not in f and (wake_log.AUDIO / f"{f['n']:06d}.wav").exists()]
+    if most == 0:
+        print("Not transcribing the wake windows (--windows 0).")
+        return
+    if len(todo) > most:
+        # Oldest first: the recent ones will come round again tomorrow.
+        todo = todo[:most]
     if not todo:
         return
-    print(f"Transcribing {len(todo)} wake windows with {size}...")
+    print(f"Transcribing {len(todo)} wake windows with {size}...", flush=True)
     model = WhisperModel(size, device="cpu", compute_type="int8")
 
     import wave
 
     import numpy as np
 
-    for firing in todo:
+    began = time.monotonic()
+    for done, firing in enumerate(todo, 1):
+        if done % 10 == 0 or done == len(todo):
+            each = (time.monotonic() - began) / done
+            print(f"  {done}/{len(todo)}  {each:.1f}s each, "
+                  f"about {each * (len(todo) - done) / 60:.0f} min left",
+                  flush=True)
         path = wake_log.AUDIO / f"{firing['n']:06d}.wav"
         with wave.open(str(path), "rb") as handle:
             raw = handle.readframes(handle.getnframes())
@@ -250,6 +263,11 @@ def show() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--windows", type=int, default=200,
+                        help="how many wake windows to transcribe. On a Pi "
+                             "this is seconds each, so a backlog of "
+                             "hundreds is a quarter of an hour with the "
+                             "processor pinned. 0 to skip it")
     parser.add_argument("--whisper", default="small.en",
                         help="which Whisper to judge the wake window with. "
                              "Bigger than the Pi's tiny.en on purpose "
@@ -272,7 +290,7 @@ def main() -> int:
     if not todo:
         return show()
 
-    transcribe_windows(todo, args.whisper)
+    transcribe_windows(todo, args.whisper, args.windows)
 
     unsure = []
     free = 0

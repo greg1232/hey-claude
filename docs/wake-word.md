@@ -338,3 +338,43 @@ on 67 firings held back from the fitting:
 The retrained model would have been much worse, and the gate refused it.
 That is the number to watch, and the reason `./label.sh` exists: the
 automatic labels are good at the easy half and guess at the hard half.
+
+## Where the data lives
+
+```
+./backup.sh              copy it off the Pi and keep every version
+./backup.sh --local      copy it down, upload nothing
+./backup.sh --dry        say what would happen
+```
+
+Everything the speaker learns for itself lives in `state/` on the Pi,
+which git ignores: every firing with the 768 numbers it was scored on, the
+recordings behind them, the labels, and the model fitted from all of it.
+An SD card in an always-on Pi is not a place to keep the only copy of
+anything, and the recordings are on a rotating cap of four hundred, so the
+audio behind labels already given is being deleted to make room.
+
+`backup.sh` copies it down and pushes it to a Hugging Face dataset repo,
+which is a git repository with large-file storage behind it — so each
+backup is a commit, and you can go back to the data a particular model was
+fitted on rather than guessing. It writes a `metadata.csv` so the whole
+thing is browsable in a page, one row per firing lined up with its
+recording.
+
+**It creates the repository private**, and `--public` is a thing you have
+to type. This is not the same as the recordings in `train/real/`, which
+are four people who sat down and said "hey Claude" on purpose. This is two
+second windows of a living room caught whenever the detector fired — dozens
+an hour with a television on — containing whatever was being said by
+whoever was in the room. Nobody chose to record most of it.
+
+First backup:
+
+```
+848 firings, 1304 near misses, 1826 labelled, 143 by a person, 400 with audio
+32 MB
+```
+
+What is worth keeping is `wakes/` and `enrolled/`. The books and sound
+effects caches are downloaded copies of other people's files and can
+always be fetched again.

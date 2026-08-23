@@ -27,6 +27,8 @@ Label the log first:
 """
 
 import argparse
+import contextlib
+import fcntl
 import sys
 from pathlib import Path
 
@@ -50,6 +52,7 @@ SLACK = 0.05
 # by the shipped one on the next deploy, taking every night of learning
 # with it. src/whisper_wake.py looks in state/ first.
 LEARNED = HERE.parent / "state" / "hey_claude_whisper.npz"
+LOCK = HERE.parent / "state" / "relearn.lock"
 
 
 def load_bank(path: Path):
@@ -232,28 +235,55 @@ def nightly(say=print) -> int:
     import subprocess
     import sys as _sys
 
-    say("Labelling what today produced...")
-    done = subprocess.run(
-        [_sys.executable, str(HERE / "label_wakes.py"), "--no-claude",
-         "--whisper", "tiny.en"],
-        capture_output=True, text=True)
-    for line in done.stdout.strip().splitlines()[-4:]:
-        say("  " + line)
-    if done.returncode != 0:
-        say("  labelling failed:\n" + done.stderr.strip()[-400:])
+    with _only_one():
+        say("Labelling what today produced...")
+        # Not captured. This is the slow part — on a Pi it is seconds per
+        # clip — and hiding its output made a job that was working look
+        # exactly like a job that had hung.
+        #
+        # And no wake windows: transcribing them is the whole cost, and
+        # measured against eighty real recordings tiny.en writes down the
+        # wake word about one time in six. What came next does the work.
+        done = subprocess.run(
+            [_sys.executable, "-u", str(HERE / "label_wakes.py"),
+             "--no-claude", "--windows", "0"])
+        if done.returncode != 0:
+            say(f"  labelling gave up ({done.returncode})")
 
-    say("\nRefitting...")
-    said = refit(say=say, only_if_better=True)
-    say("\n" + said)
+        say("\nRefitting...")
+        said = refit(say=say, only_if_better=True)
+        say("\n" + said)
 
-    if "still better" in said or "Nothing" in said or "nothing" in said:
-        return 0
+        if "still better" in said or "othing" in said:
+            return 0
 
-    # Only worth restarting if something was actually written.
-    say("\nRestarting the speaker to pick it up...")
-    subprocess.run(["systemctl", "--user", "restart", "claude-speaker"],
-                   capture_output=True)
+        # Only worth restarting if something was actually written.
+        say("\nRestarting the speaker to pick it up...")
+        subprocess.run(["systemctl", "--user", "restart", "claude-speaker"],
+                       capture_output=True)
     return 0
+
+
+@contextlib.contextmanager
+def _only_one():
+    """Refuse to run twice at once.
+
+    Two of these overlapped and spent twenty minutes fighting each other
+    and the speaker for the processor, which on four cores is felt. The
+    timer fires nightly and a person can ask for it at any moment, so
+    overlapping is ordinary rather than exotic.
+    """
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(LOCK, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit("Already learning — leaving that one to it.")
+    try:
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def main() -> int:
