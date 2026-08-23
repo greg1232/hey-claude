@@ -74,12 +74,30 @@ OUTPUT_DEVICE=Array
 # leave it blank to not touch the system mixer at all.
 OUTPUT_VOLUME=100
 
-# The wake word, and how sure it has to be. The right threshold depends on
-# the microphone and the room, so measure yours on the Pi itself:
+# The wake word, and how sure it has to be.
+#
+# This was 0.99, and 0.99 was costing about half the recall for nothing.
+# Measured on the training bank, holding one child out of training entirely:
+#
+#     threshold   recall, unseen voice   recall, known voices
+#       0.99              38%                    58%
+#       0.90              52%                    94%
+#       0.80              55%                   100%
+#       0.50              66%                   100%
+#
+# and no measurable change in false wakes anywhere across that range —
+# though those negatives were mined against this same model, so treat the
+# shape as the signal and not the absolute.
+#
+# What makes a low threshold affordable is that a false wake is now silent:
+# nothing said means nothing spoken, and television speech gets (nothing)
+# back from Claude. It costs a flash of the LED ring and some CPU.
+#
+# Measure yours on the Pi itself, and read what it actually logged:
 #     python train/test_wake.py --times 6
-#     python train/test_silence.py --seconds 600
+#     python src/wake_log.py
 WAKE_MODEL=hey_claude_whisper.npz
-WAKE_THRESHOLD=0.99
+WAKE_THRESHOLD=0.80
 
 # How often the Whisper wake word looks, in seconds. About 42% of one core
 # at 0.4 on a Pi 4. Raise it to spend less, and be noticed a little later.

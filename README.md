@@ -531,6 +531,59 @@ thread ahead      4.13s
 SENTENCE_PAUSE=0.12
 ```
 
+## Where to put the threshold
+
+Held out entirely, the wake word catches 52% of one child's attempts, and
+that number moves a lot with the threshold:
+
+```
+ threshold   recall, unseen voice   recall, known voices   room false/hr
+     0.50            66%                   100%                 0.0
+     0.80            55%                   100%                 0.0
+     0.90            52%                    94%                 0.0
+     0.99            38%                    58%                 0.0
+```
+
+It shipped at 0.99, which was throwing away nearly half the recall for
+nothing measurable. It is 0.80 now. Two caveats on that table: the room
+negatives were hard-mined against this same model, so `0.0/hr` is
+optimistic — the real room gave about forty an hour at 0.99 — and the
+"known voices" column is partly memorisation. The held-out column is the
+honest one, and the shape is the point.
+
+What makes a low threshold affordable is that a false wake is now silent.
+It used to apologise out loud to an empty room; now nothing said means
+nothing spoken, and television speech gets `(nothing)` back from Claude. A
+false wake costs a flash of the LED ring and some CPU.
+
+### Why there's no second-stage verifier
+
+The obvious idea is to propose at a low threshold and confirm with a
+stronger model. It doesn't work, and the way it fails is worth writing
+down.
+
+Whisper cannot transcribe the wake word at all. Against 80 real recordings
+of four people saying "hey Claude":
+
+```
+tiny.en   4/80 =  5%
+base.en  13/80 = 16%
+```
+
+It hears "It's hot", "Take that", "Great class", "Thank God" — all the
+right rhythm and roughly the right vowels. The acoustics are fine and the
+language model overrules them, because "Claude" is rare and "take that" is
+common.
+
+Biasing the decoder with `initial_prompt="Hey Claude."` takes tiny.en from
+0% to 97%, and makes it three times faster. It also makes it say "Hey
+Claude" on **58% of room noise and 55% of ordinary speech**. It isn't
+recognising the phrase, it's repeating the prompt. `hotwords="Claude"` is
+weaker in both directions, 63% on real ones, and not worth it either.
+
+Which is a decent independent argument that the 768-number classifier is
+doing real work a general speech model won't do for free.
+
 ## Learning from its own mistakes
 
 The wake word is wrong about forty times an hour with a television on, and
