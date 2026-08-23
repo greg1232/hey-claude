@@ -24,6 +24,7 @@ import sys
 import threading
 
 import config
+import sounds
 
 # True while the speaker is talking out loud. The microphone watches this
 # so the speaker doesn't hear itself and wake itself up in a loop.
@@ -128,7 +129,7 @@ def speak(text: str) -> None:
     if not text:
         return
 
-    with _device:
+    with _device, sounds.paused():
         speaking.set()
         try:
             if MACOS:
@@ -175,7 +176,7 @@ def beep() -> None:
     tone = 0.25 * np.sin(2 * np.pi * 880 * t)
     # Fade both ends, or it clicks.
     fade = np.minimum(np.minimum(t, t[-1] - t) * 60, 1.0)
-    with _device:
+    with _device, sounds.paused():
         _play(device, rate, (tone * fade * 32767).astype(np.int16))
 
 
@@ -207,7 +208,7 @@ def ring_once() -> None:
         parts.append(np.zeros(int(rate * 0.09)))
 
     audio = (np.concatenate(parts) * 32767).astype(np.int16)
-    with _device:
+    with _device, sounds.paused():
         speaking.set()
         try:
             _play(device, rate, audio)

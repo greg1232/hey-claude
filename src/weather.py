@@ -23,6 +23,7 @@ import requests
 import sys
 
 import config
+import tools
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -248,6 +249,22 @@ def forecast(days_ahead: int = 0) -> str:
         f"sunset {_clock(day['sunset'][index])}."
     )
     return " ".join(parts)
+
+
+@tools.tool(
+    "Look up the weather forecast for where the speaker is. Today's weather "
+    "is already in your notes above, so only use this for another day, or "
+    "for detail the notes don't have.",
+    properties={
+        "days_ahead": {
+            "type": "integer",
+            "description": "0 for today, 1 for tomorrow, up to 6.",
+        },
+    },
+    says="look up the weather forecast",
+)
+def get_weather(days_ahead: int = 0) -> str:
+    return forecast(int(days_ahead))
 
 
 def _weekday(stamp: str) -> str:

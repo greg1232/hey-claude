@@ -18,6 +18,7 @@ import audio_in
 import brain
 import config
 import lights
+import sounds
 import stt
 import timers
 import tts
@@ -31,6 +32,7 @@ def run_voice_mode() -> None:
     the_brain = brain.Brain()
     weather.start()  # Fetches in the background; never blocks a question.
     timers.start(tts.speak, tts.ring_once)  # Rings on its own thread.
+    sounds.start()  # Watches the clock on anything left playing.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()
@@ -67,7 +69,12 @@ def run_voice_mode() -> None:
             # answer is rude, and ringing during step 3 puts a chime in the
             # middle of the recording, which Whisper duly transcribes as a
             # word in the question.
-            with timers.turn:
+            # Anything playing in the background steps aside for the whole
+            # turn, not just while the speaker talks — otherwise the
+            # question is recorded over rain and Whisper has to guess
+            # through it. It comes back afterwards, unless the question was
+            # "stop", in which case there's nothing left to come back.
+            with timers.turn, sounds.paused():
                 # Whatever happens in here — a question, a false wake,
                 # a network error — the ring goes dark again on the way
                 # out. A speaker left glowing blue looks like it is still

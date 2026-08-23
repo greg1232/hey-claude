@@ -151,6 +151,16 @@ LEDS = _get("LEDS", "on").lower() not in ("off", "0", "false", "no")
 LED_BRIGHTNESS = int(_get("LED_BRIGHTNESS", "40"))
 
 
+# --- Background sounds ---
+# How loud rain, ocean and the rest play, from 0 to 1. Quiet on purpose:
+# this is something to fall asleep to, and the microphone has to hear you
+# over it.
+SOUND_VOLUME = float(_get("SOUND_VOLUME", "0.30"))
+
+# How long they play if nobody says. Hours.
+SOUND_HOURS = float(_get("SOUND_HOURS", "8"))
+
+
 if __name__ == "__main__":
     # Print what the speaker will actually use, which is not always what you
     # think you set — .env overrides these, and a typo in a name is silent.

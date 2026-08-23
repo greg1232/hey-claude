@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 
 import config
 import lights
+import tools
 
 # Where alarms are kept between runs. Deliberately outside the code, so
 # deploying doesn't overwrite them and git never sees them.
@@ -127,6 +128,78 @@ def _add(item: dict) -> str:
         _pending.append(item)
         _save()
     return ""
+
+
+# --- what Claude can ask for --------------------------------------------------
+
+
+@tools.tool(
+    "Start a countdown timer. Use this whenever someone asks for a timer, "
+    "or to be told when some number of minutes has passed. Work out the "
+    "total number of seconds yourself: 'a minute and a half' is 90.",
+    properties={
+        "seconds": {
+            "type": "integer",
+            "description": "How long the timer runs, in seconds.",
+        },
+        "label": {
+            "type": "string",
+            "description": "What the timer is for, if they said — 'pasta', "
+                           "'homework'. Leave empty if they didn't say.",
+        },
+    },
+    required=["seconds"],
+    says="set timers",
+)
+def set_timer(seconds: int, label: str = "") -> str:
+    return add_timer(int(seconds), label.strip())
+
+
+@tools.tool(
+    "Set an alarm for a particular time of day. Use this for 'wake me at "
+    "seven' or 'remind me at four o'clock'. Times are 24-hour. If they "
+    "didn't say which day, leave the date empty and it takes the next time "
+    "that clock time comes round.",
+    properties={
+        "time": {
+            "type": "string",
+            "description": "24-hour clock time, like 07:00 or 16:30.",
+        },
+        "date": {
+            "type": "string",
+            "description": "The day, as YYYY-MM-DD. Leave empty for the "
+                           "next time this clock time happens.",
+        },
+        "label": {
+            "type": "string",
+            "description": "What the alarm is for, if they said.",
+        },
+    },
+    required=["time"],
+    says="set alarms",
+)
+def set_alarm(time: str, date: str = "", label: str = "") -> str:
+    return add_alarm(time, date, label.strip())
+
+
+@tools.tool("List every timer and alarm that is currently set, and how long "
+            "is left on each.")
+def list_timers() -> str:
+    return listing()
+
+
+@tools.tool(
+    "Cancel a timer or alarm. Pass the name if they said one, or 'all' to "
+    "clear everything.",
+    properties={
+        "which": {
+            "type": "string",
+            "description": "The name of the one to cancel, or 'all'.",
+        },
+    },
+)
+def cancel_timer(which: str = "all") -> str:
+    return cancel(which)
 
 
 # --- asking about them ------------------------------------------------------

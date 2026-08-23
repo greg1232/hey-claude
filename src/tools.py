@@ -1,20 +1,30 @@
-"""Tools — the things the speaker can actually do, not just talk about.
+"""Tools — the plumbing that lets Claude do things, not just talk about them.
 
-Claude gets a list of these with every question. If a question needs one,
-Claude asks for it by name, we run it here, hand back what happened, and
-Claude turns that into a sentence to say out loud. The person hears one
-answer; the round trip is invisible.
+This file is only the framework. It knows how to collect tools, describe
+them to Claude, and run one safely. It knows nothing about timers or rain,
+and adding a capability doesn't touch it.
 
-Adding a tool is one function and one decorator:
+A tool lives in the module that implements it. `timers.py` owns the timer
+tools, `sounds.py` owns the ones that play rain, and each is one function
+and one decorator next to the code it drives:
 
-    @tool("Turn the kitchen light on or off.",
-          properties={"on": {"type": "boolean", "description": "..."}},
-          required=["on"])
+    import tools
+
+    @tools.tool(
+        "Turn the kitchen light on or off.",
+        properties={"on": {"type": "boolean", "description": "..."}},
+        required=["on"],
+        says="turn the kitchen light on and off",
+    )
     def set_kitchen_light(on: bool) -> str:
         ...
         return "The kitchen light is on."
 
-Three rules for the ones that live here:
+Then add the module's name to FEATURES below. That is the whole of it —
+the API description, the round trip, and the line in the system prompt
+telling Claude the speaker can do it all follow from those two things.
+
+Three rules for a tool:
 
   Return a sentence, not a data structure. Claude reads it and rephrases
   it for speaking, so plain English costs nothing and saves a translation
@@ -26,31 +36,35 @@ Three rules for the ones that live here:
 
   Be quick. Everything here happens while somebody stands there waiting.
 
-One tool isn't in this file at all. Web search runs on Anthropic's side:
-we declare it, Claude searches, and the results never touch the Pi. See
-_search_tool() at the bottom.
+`says` is what the speaker tells Claude it can do, in the same words a
+person would use. It's generated from the tools rather than written out in
+the prompt, because the prompt used to insist there were no timers on the
+day timers were added.
 
-    python src/tools.py         list the tools and their descriptions
+    python src/tools.py         list every tool
 """
 
 import json
 import sys
 
-import config
-import timers
-import weather
+# Every module that owns tools. Importing them is what registers what they
+# can do, so this list is the only place a new capability has to appear.
+FEATURES = ("timers", "weather", "sounds", "search")
 
 _REGISTRY: dict[str, "Tool"] = {}
+_SERVER: list = []
+_loaded = False
 
 
 class Tool:
     """One thing the speaker can do."""
 
-    def __init__(self, name, description, properties, required, run):
+    def __init__(self, name, description, properties, required, says, run):
         self.name = name
         self.description = description
         self.properties = properties
         self.required = required
+        self.says = says
         self.run = run
 
     def spec(self) -> dict:
@@ -66,7 +80,8 @@ class Tool:
         }
 
 
-def tool(description: str, properties: dict | None = None, required=()):
+def tool(description: str, properties: dict | None = None, required=(),
+         says: str = ""):
     """Register a function as something Claude can ask for."""
     def keep(function):
         _REGISTRY[function.__name__] = Tool(
@@ -74,106 +89,51 @@ def tool(description: str, properties: dict | None = None, required=()):
             description=description,
             properties=properties or {},
             required=required,
+            says=says,
             run=function,
         )
         return function
     return keep
 
 
-# --- the tools --------------------------------------------------------------
+def server_tool(build, says: str = ""):
+    """Register a tool that runs on Anthropic's side rather than here.
+
+    `build` is called each time the tools are described, and returns the
+    spec or None — None meaning the feature is switched off. Web search is
+    the only one of these; it has no function to run, because the search
+    happens inside the API between our question going out and the answer
+    coming back.
+    """
+    _SERVER.append((build, says))
 
 
-@tool(
-    "Start a countdown timer. Use this whenever someone asks for a timer, "
-    "or to be told when some number of minutes has passed. Work out the "
-    "total number of seconds yourself: 'a minute and a half' is 90.",
-    properties={
-        "seconds": {
-            "type": "integer",
-            "description": "How long the timer runs, in seconds.",
-        },
-        "label": {
-            "type": "string",
-            "description": "What the timer is for, if they said — 'pasta', "
-                           "'homework'. Leave empty if they didn't say.",
-        },
-    },
-    required=["seconds"],
-)
-def set_timer(seconds: int, label: str = "") -> str:
-    return timers.add_timer(int(seconds), label.strip())
+def load() -> None:
+    """Import every feature module, so its tools register themselves."""
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True  # Set first: a feature importing tools mustn't loop.
+    import importlib
+    for name in FEATURES:
+        try:
+            importlib.import_module(name)
+        except Exception as error:
+            # One broken feature shouldn't cost you the other five.
+            print(f"[tools] {name} unavailable: {type(error).__name__}: {error}")
 
 
-@tool(
-    "Set an alarm for a particular time of day. Use this for 'wake me at "
-    "seven' or 'remind me at four o'clock'. Times are 24-hour. If they "
-    "didn't say which day, leave the date empty and it takes the next time "
-    "that clock time comes round.",
-    properties={
-        "time": {
-            "type": "string",
-            "description": "24-hour clock time, like 07:00 or 16:30.",
-        },
-        "date": {
-            "type": "string",
-            "description": "The day, as YYYY-MM-DD. Leave empty for the "
-                           "next time this clock time happens.",
-        },
-        "label": {
-            "type": "string",
-            "description": "What the alarm is for, if they said.",
-        },
-    },
-    required=["time"],
-)
-def set_alarm(time: str, date: str = "", label: str = "") -> str:
-    return timers.add_alarm(time, date, label.strip())
-
-
-@tool("List every timer and alarm that is currently set, and how long is "
-      "left on each.")
-def list_timers() -> str:
-    return timers.listing()
-
-
-@tool(
-    "Cancel a timer or alarm. Pass the name if they said one, or 'all' to "
-    "clear everything.",
-    properties={
-        "which": {
-            "type": "string",
-            "description": "The name of the one to cancel, or 'all'.",
-        },
-    },
-)
-def cancel_timer(which: str = "all") -> str:
-    return timers.cancel(which)
-
-
-@tool(
-    "Look up the weather forecast for where the speaker is. Today's weather "
-    "is already in your notes above, so only use this for another day, or "
-    "for detail the notes don't have.",
-    properties={
-        "days_ahead": {
-            "type": "integer",
-            "description": "0 for today, 1 for tomorrow, up to 6.",
-        },
-    },
-)
-def get_weather(days_ahead: int = 0) -> str:
-    return weather.forecast(int(days_ahead))
-
-
-# --- running them -----------------------------------------------------------
+# --- using them -------------------------------------------------------------
 
 
 def specs() -> list[dict]:
     """Every tool, in the form the API wants, for both kinds."""
+    load()
     everything = [t.spec() for t in _REGISTRY.values()]
-    search = _search_tool()
-    if search is not None:
-        everything.append(search)
+    for build, _ in _SERVER:
+        built = build()
+        if built is not None:
+            everything.append(built)
     return everything
 
 
@@ -184,6 +144,7 @@ def run(name: str, arguments: dict) -> str:
     person gets "I couldn't set that timer" instead of silence, which is
     the difference between a bug and a broken speaker.
     """
+    load()
     found = _REGISTRY.get(name)
     if found is None:
         return f"There is no tool called {name}."
@@ -200,49 +161,15 @@ def run(name: str, arguments: dict) -> str:
 
 
 def summary() -> str:
-    """One line naming what the speaker can do, for the system prompt.
-
-    Generated rather than written down, so adding a tool can't leave the
-    prompt claiming the speaker still can't do it. That exact mismatch is
-    why this file exists: the prompt used to insist there were no timers.
-    """
-    can = ["set timers", "set alarms", "look up the weather forecast"]
-    if _search_tool() is not None:
-        can.append("search the web for things you don't know")
+    """One line naming what the speaker can do, for the system prompt."""
+    load()
+    can = [t.says for t in _REGISTRY.values() if t.says]
+    can += [says for build, says in _SERVER if says and build() is not None]
+    if not can:
+        return "answer questions"
+    if len(can) == 1:
+        return can[0]
     return ", ".join(can[:-1]) + ", and " + can[-1]
-
-
-# --- web search, which runs on Anthropic's side -----------------------------
-
-
-def _search_tool() -> dict | None:
-    """Declare Claude's own web search, if it's switched on.
-
-    This one is different in kind from the rest of the file. There's no
-    function to write: the search happens inside the API, between our
-    question going out and the answer coming back, so the Pi never fetches
-    a page and there's no second round trip to pay for.
-
-    It is not free, in either sense. Each search costs money, and it adds
-    seconds to an answer that a kid is standing there waiting for — so the
-    number of searches per question is capped low, and Claude is told in
-    the system prompt to use it only when the answer really does depend on
-    something recent.
-    """
-    if not config.WEB_SEARCH:
-        return None
-
-    spec = {
-        "type": "web_search_20250305",
-        "name": "web_search",
-        "max_uses": config.WEB_SEARCH_MAX,
-    }
-    # Where we are, so "when does the museum close" doesn't search the
-    # other side of the planet. Costs nothing — the weather already asked.
-    here = weather.place_hint()
-    if here:
-        spec["user_location"] = here
-    return spec
 
 
 if __name__ == "__main__":
@@ -250,13 +177,20 @@ if __name__ == "__main__":
         print(__doc__)
         raise SystemExit
 
-    for spec in specs():
+    # Run as a script this file is __main__, not `tools` — and the feature
+    # modules do `import tools`, which would load a second copy of it with
+    # its own empty registry. So ask that copy, the one the tools actually
+    # registered with.
+    import tools
+
+    for spec in tools.specs():
         if "input_schema" in spec:
             takes = ", ".join(spec["input_schema"]["properties"]) or "nothing"
             print(f"\n{spec['name']}({takes})")
             print(f"    {spec['description']}")
         else:
             print(f"\n{spec['name']}  (runs on Anthropic's side)")
-            print(f"    {json.dumps({k: v for k, v in spec.items() if k != 'name'})}")
+            print("    " + json.dumps(
+                {k: v for k, v in spec.items() if k != "name"}))
 
-    print(f"\nThe speaker can {summary()}.")
+    print(f"\nThe speaker can {tools.summary()}.")
