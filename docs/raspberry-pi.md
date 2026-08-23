@@ -30,22 +30,31 @@ gets sent untouched.
 
 ```bash
 cd ~/claude-speaker
-./start.sh              # start it in the background
-./start.sh --status     # is it running, and where's the log
-./start.sh --stop       # stop it
-tail -f speaker.log     # watch what it hears and says
+./start.sh                                    # start it, or restart it
+./start.sh --status                           # is it running
+./start.sh --stop                             # stop it
+journalctl --user-unit=claude-speaker -f      # watch what it hears and says
 ```
 
-`./start.sh` returns straight away, so closing the terminal or dropping the
-SSH connection doesn't take the speaker with it. Everything it prints goes
-to `speaker.log` in the project folder, unbuffered, so `tail -f` shows each
-question as it's asked rather than in a lump twenty minutes later. The
-previous run is kept as `speaker.log.1` — when something dies overnight,
-the restart is what you notice, and it mustn't erase the reason.
+**Everything goes through systemd.** `start.sh` installs the service if the
+machine hasn't got it, and then starts, stops and reports on that — it has
+no other way of running the speaker.
 
-It won't start twice. On a microphone array, playing and listening are the
-same piece of hardware and it allows a single stream, so a second speaker
-doesn't share the microphone — it fails, or quietly steals it.
+It used to have one. It would launch `src/main.py` itself under `nohup`,
+writing to `speaker.log`, and then had to detect the service and talk you
+out of using the script:
+
+```
+systemd is looking after the speaker (currently active).
+Use it, or the two will fight over the microphone:
+```
+
+That is a script explaining a design rather than doing a job. Two speakers
+genuinely cannot coexist — on a microphone array, playing and listening are
+the same piece of hardware and it allows one stream, so the second one
+fails or quietly steals it — but the answer to that is one way to start it,
+not a warning. The service restarts on failure, comes back at boot, and
+keeps its log in the journal, none of which the loose process did.
 
 Two other ways to run it, both staying in your terminal:
 

@@ -42,15 +42,10 @@ def run_voice_mode() -> None:
     with audio_in.Microphone() as mic:
         mic.measure_noise_floor()  # Listen for a moment before saying ready.
         # Say how to stop *this* speaker. Ctrl-C is only an answer if
-        # somebody is looking at a terminal; ./start.sh --stop is only an
-        # answer if this wasn't started by systemd, which sets
-        # INVOCATION_ID and refuses to be stopped that way.
-        if sys.stdout.isatty():
-            stop = "Press Ctrl-C to stop."
-        elif os.environ.get("INVOCATION_ID"):
-            stop = "Stop it with systemctl --user stop claude-speaker"
-        else:
-            stop = "Stop it with ./start.sh --stop"
+        # somebody is looking at a terminal; otherwise it is the service,
+        # which is now the only other way it can have been started.
+        stop = ("Press Ctrl-C to stop." if sys.stdout.isatty()
+                else "Stop it with ./start.sh --stop")
         print(f"\nReady — {waker.label}. {stop}\n")
         lights.show("idle")
 

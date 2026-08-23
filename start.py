@@ -1,11 +1,16 @@
 """Start the Claude Speaker.
 
-    ./start.sh                 start it in the background, logging to speaker.log
-    ./start.sh --foreground    run it here instead, printing to this terminal
-    ./start.sh --text          type questions instead of speaking them
-    ./start.sh --stop          stop the one that's running
+    ./start.sh                 start it, or restart it if it's already going
+    ./start.sh --stop          stop it
     ./start.sh --status        say whether it's running, and where its log is
+    ./start.sh --foreground    run it in this terminal instead, to watch it
+    ./start.sh --text          type questions instead of speaking them
     ./start.sh --install-only  build the environment and stop (deploy.py uses this)
+
+Everything here goes through systemd. There is no second way to run the
+speaker, because two of them do not share a microphone array — playing and
+listening are the same piece of hardware and it allows one stream, so the
+second one fails or quietly steals it from the first.
 
 The first run takes a couple of minutes: it builds a private Python folder
 and downloads the speech models. After that it starts in seconds.
@@ -27,116 +32,69 @@ HERE = Path(__file__).resolve().parent
 VENV = HERE / ".venv"
 PYTHON = VENV / "bin" / "python"
 STAMP = VENV / ".installed"
-LOG = HERE / "speaker.log"
-PIDFILE = HERE / "speaker.pid"
-
 KEY_URL = "https://console.anthropic.com/settings/keys"
-SERVICE = "claude-speaker"
+NAME = "claude-speaker"
+# Under the home directory, not the project directory. systemd looks in
+# ~/.config/systemd/user, and looking in the wrong place made the script
+# announce there was no service while one was running perfectly well.
+UNIT = Path.home() / ".config" / "systemd" / "user" / f"{NAME}.service"
 
 
-def managed_by_systemd() -> bool:
-    """Is systemd looking after the speaker on this machine?
+def unit_installed() -> bool:
+    return UNIT.is_file()
 
-    If it is, this script must keep its hands off. Starting a second one
-    here would fight it for the microphone, and stopping one by killing the
-    process leaves systemd thinking it exited cleanly — enabled, inactive,
-    and not coming back until the next reboot. Which is exactly what
-    happened the first time ./deploy.sh --service was used.
+
+def install_unit() -> None:
+    """Write the service, if this machine hasn't got it yet.
+
+    The text comes from deploy.py so there is one definition of what the
+    service is, rather than two that drift.
     """
-    if not Path("/run/systemd/system").exists():
-        return False
-    # Either kind counts. The project used to install a system-wide unit
-    # and now installs a user one, so a machine part way between the two
-    # has the old one and not the new — and looking only for the new one
-    # would start a rival beside it.
-    return bool(service_scope())
+    import deploy
+
+    UNIT.parent.mkdir(parents=True, exist_ok=True)
+    UNIT.write_text(deploy.SERVICE.format(dir=HERE.name))
+    systemctl("daemon-reload")
+    systemctl("enable", NAME)
+    print(f"Installed {UNIT}")
 
 
-def service_scope() -> list[str] | None:
-    """["--user"], [] for a system unit, or None if there's no unit."""
-    for scope in (["--user"], []):
-        state = subprocess.run(["systemctl", *scope, "is-enabled", SERVICE],
-                               capture_output=True, text=True).stdout.strip()
-        if state in ("enabled", "enabled-runtime", "static", "linked"):
-            return scope
-    return None
+def systemctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["systemctl", "--user", *args],
+                          capture_output=True, text=True)
 
 
-def systemd_hint(action: str) -> int:
-    scope = service_scope() or ["--user"]
-    active = subprocess.run(["systemctl", *scope, "is-active", SERVICE],
-                            capture_output=True, text=True).stdout.strip()
-    where = " ".join(scope)
-    sudo = "" if scope == ["--user"] else "sudo "
-    print(f"systemd is looking after the speaker (currently {active}).")
-    print("Use it, or the two will fight over the microphone:\n")
-    print(f"    {sudo}systemctl {where} {action} {SERVICE}".replace("  ", " "))
-    print(f"    journalctl --user-unit={SERVICE} -f" if scope == ["--user"]
-          else f"    journalctl -u {SERVICE} -f")
-    return 1
+def is_active() -> str:
+    return systemctl("is-active", NAME).stdout.strip() or "unknown"
 
 
 def speaker_pid() -> int | None:
-    """The running speaker's pid, or None."""
-    if PIDFILE.is_file():
-        try:
-            pid = int(PIDFILE.read_text().strip())
-            os.kill(pid, 0)
-            return pid
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    # No pidfile, or a stale one — it may have been started by systemd or by
-    # hand. The bracket keeps pgrep from matching this process.
-    found = subprocess.run(["pgrep", "-f", r"[s]rc/main\.py"],
-                           capture_output=True, text=True)
-    lines = [line for line in found.stdout.split() if line.isdigit()]
-    return int(lines[0]) if lines else None
+    """The running speaker's pid, according to systemd."""
+    said = systemctl("show", NAME, "-p", "MainPID", "--value").stdout.strip()
+    return int(said) if said.isdigit() and said != "0" else None
 
 
 def stop() -> int:
-    if managed_by_systemd():
-        return systemd_hint("stop")
-    pid = speaker_pid()
-    if pid is None:
-        PIDFILE.unlink(missing_ok=True)
+    if not unit_installed():
+        print("Not running (no service installed).")
+        return 0
+    if is_active() != "active":
         print("Not running.")
         return 0
-    os.kill(pid, signal.SIGTERM)
-    for _ in range(20):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.25)
-    else:
-        print(f"Wouldn't stop, so making it: pid {pid}")
-        os.kill(pid, signal.SIGKILL)
-    PIDFILE.unlink(missing_ok=True)
-    print("Stopped.")
+    systemctl("stop", NAME)
+    print("Stopped." if is_active() != "active" else "Wouldn't stop.")
     return 0
 
 
 def status() -> int:
-    if managed_by_systemd():
-        scope = service_scope() or ["--user"]
-        active = subprocess.run(["systemctl", *scope, "is-active", SERVICE],
-                                capture_output=True, text=True).stdout.strip()
-        where = " ".join(scope)
-        sudo = "" if scope == ["--user"] else "sudo "
-        pid = speaker_pid()
-        print(f"Looked after by systemd ({where or 'system-wide'}): {active}"
-              + (f", pid {pid}" if pid else ""))
-        print(f"  log:  journalctl --user-unit={SERVICE} -f" if scope == ["--user"]
-              else f"  log:  journalctl -u {SERVICE} -f")
-        print(f"  stop: {sudo}systemctl {where} stop {SERVICE}".replace("  ", " "))
-        return 0
+    if not unit_installed():
+        print("No service installed. Run ./start.sh to install and start it.")
+        return 1
     pid = speaker_pid()
-    if pid is None:
-        print("Not running.")
-    else:
-        print(f"Running as pid {pid}.")
-        print(f"  log:  {LOG}")
-        print("  stop: ./start.sh --stop")
+    print(f"{is_active()}" + (f", pid {pid}" if pid else ""))
+    print(f"  log:     journalctl --user-unit={NAME} -f")
+    print("  stop:    ./start.sh --stop")
+    print("  restart: ./start.sh")
     return 0
 
 
@@ -186,50 +144,46 @@ def check_settings() -> None:
             f"Get one at {KEY_URL}")
 
 
-def start_daemon(extra: list[str]) -> int:
-    if managed_by_systemd():
-        return systemd_hint("start")
+def start(extra: list[str]) -> int:
+    """Start the speaker, which means starting the service.
 
-    # Only one at a time. On a microphone array, playing and listening are
-    # the same piece of hardware and it allows a single stream, so a second
-    # speaker doesn't share the microphone — it fails, or quietly steals it.
-    running = speaker_pid()
-    if running is not None:
-        print(f"Already running as pid {running}.")
-        print("  ./start.sh --stop     stop it")
-        print("  ./start.sh --status   where its log is")
+    There was once a second way — this script would run src/main.py itself
+    under nohup, and then had to detect the service and warn you off,
+    because two speakers do not share a microphone array: playing and
+    listening are the same piece of hardware and it allows one stream, so
+    the second one fails or quietly steals it from the first.
+
+    That whole apparatus existed to manage a situation nothing needs. The
+    service restarts on failure, starts at boot, and keeps its log in the
+    journal, which the loose process never did.
+    """
+    if extra:
+        # --text and --foreground want a terminal, so they cannot be the
+        # service. Stop it first rather than fight it for the microphone.
+        if unit_installed() and is_active() == "active":
+            print("Stopping the service first — it holds the microphone.")
+            systemctl("stop", NAME)
+        print()
+        # main.py knows --text; --foreground only means "not the service".
+        pass_on = [a for a in extra if a != "--foreground"]
+        return subprocess.run([str(PYTHON), "src/main.py", *pass_on],
+                              cwd=HERE).returncode
+
+    if not unit_installed():
+        install_unit()
+
+    systemctl("restart", NAME)
+    if is_active() != "active":
+        print("It wouldn't start. The last of the log:\n")
+        print(subprocess.run(
+            ["journalctl", "--user-unit", NAME, "-n", "20", "--no-pager",
+             "-o", "cat"], capture_output=True, text=True).stdout)
         return 1
 
-    # Keep the last run's log. When something dies at three in the morning,
-    # the restart is what you notice, and it mustn't erase the reason.
-    if LOG.is_file():
-        LOG.replace(LOG.with_suffix(".log.1"))
-
-    # PYTHONUNBUFFERED, because Python buffers its output when writing to a
-    # file rather than a terminal. Without it the log sits empty for a long
-    # time and looks exactly like a speaker that never started.
-    environment = dict(os.environ, PYTHONUNBUFFERED="1")
-    with open(LOG, "w") as log:
-        process = subprocess.Popen(
-            [str(PYTHON), "src/main.py", *extra], cwd=HERE, env=environment,
-            stdout=log, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, start_new_session=True)
-    PIDFILE.write_text(f"{process.pid}\n")
-
-    # Don't claim success before it's earned. Starting up means loading the
-    # speech model, the voice and the wake word, so give it a moment and
-    # then check it's still there.
-    time.sleep(3)
-    if process.poll() is not None:
-        PIDFILE.unlink(missing_ok=True)
-        print(f"It started and then stopped. The end of {LOG.name}:\n")
-        for line in LOG.read_text().splitlines()[-20:]:
-            print(f"    {line}")
-        return 1
-
-    print(f"Started as pid {process.pid}. It takes about half a minute to "
-          "be ready.\n")
-    print(f"  watch it:  tail -f {LOG.name}")
+    pid = speaker_pid()
+    print(f"Started{f' as pid {pid}' if pid else ''}. "
+          "It takes about half a minute to be ready.\n")
+    print(f"  watch it:  journalctl --user-unit={NAME} -f")
     print("  stop it:   ./start.sh --stop")
     return 0
 
@@ -258,11 +212,11 @@ def main() -> int:
         return 0
 
     # Typing questions is a conversation, so it has to stay in front of you.
-    if args.foreground or args.text:
-        print()
-        os.execv(str(PYTHON),
-                 [str(PYTHON), "src/main.py"] + (["--text"] if args.text else []))
-    return start_daemon([])
+    if args.text:
+        return start(["--text"])
+    if args.foreground:
+        return start(["--foreground"])
+    return start([])
 
 
 if __name__ == "__main__":
