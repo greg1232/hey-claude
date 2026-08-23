@@ -32,7 +32,7 @@ TARGET_FILE = HERE / ".deploy-target"  # so you only name the Pi once
 # are excluded because --delete removes whatever isn't here, and wiping the
 # log on every deploy throws away the record of what you were investigating.
 EXCLUDE = (".git/", ".venv/", ".env", ".deploy-target", "__pycache__/",
-           "*.pyc", "voices/", "train/data/", "train/voices/",
+           "*.pyc", "voices/", "state/", "train/data/", "train/voices/",
            "train/hey_claude/", "train/room/", "*.png", "*.log*", "*.pid",
            ".DS_Store")
 

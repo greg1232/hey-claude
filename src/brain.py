@@ -4,6 +4,8 @@ This is the only part that talks to the internet. Everything else (the
 microphone, the speech recognition, the voice) runs on the laptop.
 """
 
+import re
+
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +14,7 @@ import anthropic
 import sys
 
 import config
+import tools
 import weather
 
 # This tells Claude it's a speaker, not a chat window. It matters a lot:
@@ -97,23 +100,52 @@ def _now_block() -> str:
     return "\n".join(lines)
 
 
-# The speaker can only listen and talk. Without saying so, Claude agrees to
-# set timers and play songs, and then nothing happens — which is worse than
-# saying no, especially to a kid who's waiting for a timer that never rings.
+# Claude is told what the speaker can do, and the list is generated from
+# the tools themselves rather than written out here. The old version of this
+# file spelled out "you have no timers" in prose, and the day timers were
+# added it was still saying so.
 LIMITS = """What this speaker can and can't do:
-- You can only listen and talk. You have no timers, alarms, music, \
-shopping, smart-home controls, phone calls, messages, calendar, or internet \
-search. Today's weather is the one live thing you're given, and only when \
-it appears below.
-- If you're asked for one of those, say plainly that you can't do it yet, in \
-one short sentence. Never say you've set, started, played, or ordered \
-anything — nothing happens when you say that.
-- You can still answer the question behind the request. If someone asks you \
-to set a ten minute timer, tell them you can't, but you can say what time it \
-will be in ten minutes.
+- You can {can}. Those are real: use the tool and something actually \
+happens. Say what you did in one short sentence.
+- You have no music, shopping, smart-home controls, phone calls, messages, \
+or calendar. If you're asked for one of those, say plainly that you can't \
+do it yet, in one short sentence, and then answer the question behind the \
+request if there is one.
+- Never say you've set, started, played, or ordered anything unless a tool \
+did it. Nothing happens when you only say it.
 - You remember only the last few minutes of talking, and you forget \
-everything when the speaker is switched off. Don't promise to remember \
-something for later."""
+everything when the speaker is switched off. Alarms are the exception — \
+those survive.
+
+Searching the web takes a few seconds, and the person is standing there \
+waiting. Search when the answer really does turn on something recent, \
+local, or specific — today's news, when a shop shuts, a score. Don't \
+search for things you already know, and don't search twice for one \
+question if the first one answered it."""
+
+
+# The wake word fires by mistake perhaps forty times an hour with a
+# television on in the room. Almost all of those record a fragment of the
+# television and nothing else, and answering them out loud in an empty room
+# is the most annoying thing this speaker does. Whisper catches most of them
+# by hearing no speech at all; this catches the rest, where the television
+# said something real that simply wasn't addressed to us.
+MISHEARD = """One more thing. The speaker wakes on the phrase "hey Claude", \
+and with a television on in the room it sometimes mishears and wakes up \
+when nobody spoke to it. When that happens you get whatever was on: half a \
+sentence, an advert, one side of somebody else's conversation.
+
+If what arrives is clearly not somebody talking to this speaker, reply with \
+exactly this and nothing else:
+
+(nothing)
+
+Be careful with it. A child's question can be short, odd, or badly \
+transcribed and still be a real question — answer those. Use (nothing) only \
+when there is no plausible reading in which someone was talking to you."""
+
+# What Claude says instead of answering, when nobody was talking to it.
+SILENCE = "(nothing)"
 
 
 def _system_prompt() -> str:
@@ -123,8 +155,19 @@ def _system_prompt() -> str:
         "If someone asks what you're called or how to talk to you, that's the "
         "answer."
     )
-    return f"{SYSTEM_PROMPT}\n\n{LIMITS}\n\n{name}\n\n{_now_block()}"
+    limits = LIMITS.format(can=tools.summary())
+    return "\n\n".join([SYSTEM_PROMPT, limits, MISHEARD, name, _now_block()])
 
+
+# How many times round the ask-Claude, run-a-tool loop before giving up.
+# Two covers everything the speaker does today; the extra rounds are only
+# there so a question that needs a timer *and* the weather still works.
+MAX_TOOL_ROUNDS = 5
+
+# The most messages to carry, whatever the turn count says. Only a run of
+# web searches gets near it — their results ride along in the history and
+# are much larger than anything spoken.
+MAX_MESSAGES = 30
 
 # What to say when something goes wrong. Spoken out loud, so keep it short.
 TROUBLE_MESSAGE = "Sorry, I had trouble thinking about that. Try again?"
@@ -166,25 +209,72 @@ class Brain:
         self.extras = dict(_OPTIONAL_FEATURES)
 
     def ask(self, question: str) -> str:
-        """Send a question to Claude and return the spoken answer."""
+        """Send a question to Claude and return the spoken answer.
+
+        An empty string means say nothing at all — see SILENCE.
+        """
+        # Where the conversation stood before this question, so a failure
+        # halfway through a tool call can be rolled back cleanly. A turn
+        # used to add exactly one message and one pop undid it; a turn with
+        # tools adds four or more.
+        mark = len(self.messages)
         self.messages.append({"role": "user", "content": question})
         self._forget_old_turns()
 
         try:
-            response = self._create()
+            answer = self._converse()
         except anthropic.APIError as error:
             print(f"[Claude error] {error}")
-            self.messages.pop()  # Don't remember a question that failed.
+            del self.messages[mark:]
             return TROUBLE_MESSAGE
 
-        answer = _text_of(response)
+        if answer.strip() == SILENCE:
+            # Nobody was talking to us. Forget it ever happened, so the next
+            # real question doesn't arrive with a television in its history.
+            del self.messages[mark:]
+            return ""
+
         if not answer:
             # Claude declined to answer, or returned nothing at all.
-            self.messages.pop()
+            del self.messages[mark:]
             return "Sorry, I can't help with that one."
 
-        self.messages.append({"role": "assistant", "content": answer})
         return answer
+
+    def _converse(self) -> str:
+        """Talk to Claude until it stops asking for tools, then return text.
+
+        Most questions go round this loop once. One that needs a timer set
+        goes round twice: Claude asks for the tool, we run it, and Claude
+        turns the result into a sentence. The person hears one answer and
+        never learns there were two calls.
+        """
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = self._create()
+            self.messages.append(
+                {"role": "assistant", "content": response.content})
+
+            wanted = [block for block in response.content
+                      if block.type == "tool_use"]
+            if not wanted:
+                return _text_of(response)
+
+            results = []
+            for block in wanted:
+                print(f"[tool] {block.name} {block.input}")
+                outcome = tools.run(block.name, block.input)
+                print(f"[tool] -> {outcome}")
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": outcome,
+                })
+            self.messages.append({"role": "user", "content": results})
+
+        # Round and round without settling. Rare, but a speaker that goes
+        # quiet is worse than one that admits defeat.
+        print(f"[tools] gave up after {MAX_TOOL_ROUNDS} rounds")
+        return "Sorry, I got a bit tangled up. Ask me again?"
 
     def _create(self):
         """Ask Claude, dropping any option this model won't accept.
@@ -202,6 +292,7 @@ class Brain:
                     # _now_block().
                     system=_system_prompt(),
                     messages=self.messages,
+                    tools=tools.specs(),
                     **{k: v for extra in self.extras.values()
                        for k, v in extra.items()},
                 )
@@ -220,10 +311,47 @@ class Brain:
                     del self.extras[name]
 
     def _forget_old_turns(self) -> None:
-        """Keep only the most recent turns, so the conversation stays small."""
-        limit = config.HISTORY_TURNS * 2  # A turn is a question and an answer.
-        if len(self.messages) > limit:
-            self.messages = self.messages[-limit:]
+        """Keep only the most recent turns, so the conversation stays small.
+
+        This counts turns, not messages, and the difference matters now that
+        there are tools. A plain question and answer is two messages; one
+        that sets a timer is four, and one that searches the web can be more
+        and much bigger. Trimming to a fixed number of messages would have
+        quietly halved how much the speaker remembered on the days it was
+        useful, and never on the days it wasn't.
+
+        Cutting at a spoken question is also what keeps the history legal:
+        land in the middle of a tool exchange and you leave behind a
+        tool_result whose tool_use is gone, which the API rejects outright.
+        """
+        starts = [i for i, message in enumerate(self.messages)
+                  if _is_spoken_question(message)]
+
+        cut = 0
+        if len(starts) > config.HISTORY_TURNS:
+            cut = starts[-config.HISTORY_TURNS]
+
+        # A backstop for the pathological case: a run of web searches, whose
+        # results are carried along in full and are far bigger than anything
+        # a person says. Ten turns of those would be a lot of tokens to
+        # re-send with every question.
+        while len(self.messages) - cut > MAX_MESSAGES:
+            later = [i for i in starts if i > cut]
+            if not later:
+                break
+            cut = later[0]
+
+        if cut:
+            self.messages = self.messages[cut:]
+
+
+def _is_spoken_question(message: dict) -> bool:
+    """True for a message someone actually said out loud.
+
+    Tool results are also "user" messages, but their content is a list of
+    blocks rather than a string — which is exactly what tells them apart.
+    """
+    return message["role"] == "user" and isinstance(message["content"], str)
 
 
 def _text_of(response) -> str:
@@ -233,7 +361,11 @@ def _text_of(response) -> str:
     so we collect the text ones and ignore the rest.
     """
     parts = [block.text for block in response.content if block.type == "text"]
-    return " ".join(part.strip() for part in parts).strip()
+    joined = " ".join(part.strip() for part in parts).strip()
+    # A web search answer comes back as several text blocks split around the
+    # citations, so the join can leave a space before a full stop. Harmless
+    # to read, but the voice pauses at it.
+    return re.sub(r"\s+([.,!?;:])", r"\1", joined)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,16 @@ CLAUDE_MODEL = _get("CLAUDE_MODEL", "claude-sonnet-5")
 # How many past turns to remember. One turn is a question plus an answer.
 HISTORY_TURNS = int(_get("HISTORY_TURNS", "10"))
 
+# Let Claude search the web when a question turns on something recent.
+# The search runs on Anthropic's side, not on the Pi, so it costs no local
+# compute — but it does cost money per search and adds a few seconds to the
+# answer. Set WEB_SEARCH=off in .env to turn it off.
+WEB_SEARCH = _get("WEB_SEARCH", "on").lower() not in ("off", "0", "false", "no")
+
+# Searches allowed per question. A speaker should answer, not research;
+# this is the ceiling on both the wait and the bill.
+WEB_SEARCH_MAX = int(_get("WEB_SEARCH_MAX", "3"))
+
 # Roughly where the speaker is, in whatever form you'd say out loud —
 # "Palo Alto, California". The time zone already narrows this down, but a
 # town makes questions like "how long until it gets dark" answerable.

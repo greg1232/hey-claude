@@ -85,6 +85,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/audio_in.py` | Microphone — records until you stop talking |
 | `src/stt.py` | Turns the recording into words (Whisper, runs locally) |
 | `src/brain.py` | Asks Claude and gets the answer |
+| `src/tools.py` | The things it can actually do — timers, weather, search |
+| `src/timers.py` | Timers and alarms, and the ringing |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper on Linux) |
 | `src/weather.py` | Today's forecast, so it can answer weather questions |
 | `src/config.py` | Every setting, in one place |
@@ -98,6 +100,52 @@ Every script takes `--help`, including the ones in `train/`.
 
 Only `brain.py` and `weather.py` use the internet. The microphone, the wake
 word, and the speech recognition all run on the laptop.
+
+## What it can do
+
+Ask it anything and it answers. Four things it can also *do*, rather than
+just talk about:
+
+```
+"hey claude set a timer for ten minutes"
+"hey claude wake me up at seven"
+"hey claude what timers do I have"
+"hey claude what's the weather on Thursday"
+"hey claude who won the game last night"        <- searches the web
+```
+
+Each of those is a tool in `src/tools.py`. Claude is given the list with
+every question, picks one if the question needs it, and we run it and hand
+back the result; the person hears one answer and never sees the round trip.
+Adding another is one function and one decorator — see the top of that file.
+
+Two things worth knowing:
+
+**Timers ring on their own thread**, which makes them the only part of the
+speaker that talks first. A timer that comes due while somebody is asking
+something waits for the answer to finish. It has to: the microphone array
+is one device, and a chime during the recording gets transcribed as a word
+in the middle of the question.
+
+**Alarms survive a reboot, timers don't.** Somebody who sets a seven
+o'clock alarm means it. A ten minute timer is about something happening
+right now, and an hour later it's just confusing.
+
+### Web search
+
+Search runs on Anthropic's side, not on the Pi — Claude searches between
+your question going out and the answer coming back, so there's no page
+fetched here and no second round trip to pay for. It costs money per
+search and adds two or three seconds, so Claude is told to use it only
+when the answer really turns on something recent or local. Measured on a
+question that didn't need it, 2.9 seconds; on one that did, 5.0.
+
+Turn it off, or change the ceiling on searches per question, in `.env`:
+
+```
+WEB_SEARCH=off
+WEB_SEARCH_MAX=3
+```
 
 ## Weather
 

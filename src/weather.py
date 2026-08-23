@@ -179,6 +179,112 @@ def start() -> None:
         _refresh_in_background()
 
 
+def forecast(days_ahead: int = 0) -> str:
+    """The weather for one day, fetched now. For the get_weather tool.
+
+    `summary()` is the cached one-liner that goes into every system prompt;
+    this is the version that answers "what's it like on Thursday". It waits
+    for the network instead of returning something stale, because a question
+    was actually asked and a wrong answer is worse than a pause.
+    """
+    if not config.LOCATION:
+        return ("I don't know where this speaker is, so I can't look up the "
+                "weather. Set LOCATION in the .env file.")
+    if not 0 <= days_ahead <= 6:
+        return "I can only look a week ahead."
+
+    try:
+        place = _find_place()
+    except Exception:
+        place = None
+    if place is None:
+        return f"I couldn't find {config.LOCATION} on the map."
+
+    american = place.get("country_code") == "US"
+    try:
+        response = requests.get(
+            FORECAST_URL,
+            params={
+                "latitude": place["latitude"],
+                "longitude": place["longitude"],
+                "current": "temperature_2m,weather_code",
+                "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
+                          "precipitation_probability_max,sunrise,sunset"),
+                "timezone": "auto",
+                "temperature_unit": "fahrenheit" if american else "celsius",
+                "wind_speed_unit": "mph" if american else "kmh",
+                "forecast_days": days_ahead + 1,
+            },
+            timeout=TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as error:
+        return f"The weather service didn't answer ({type(error).__name__})."
+
+    day, index = data["daily"], days_ahead
+    degrees = "degrees" if american else "degrees Celsius"
+    when = {0: "Today", 1: "Tomorrow"}.get(
+        index, _weekday(day["time"][index]))
+
+    parts = []
+    if index == 0:
+        now = data["current"]
+        parts.append(
+            f"Right now in {place['name']} it is "
+            f"{round(now['temperature_2m'])} {degrees} and "
+            f"{_describe(now['weather_code'])}."
+        )
+    parts.append(
+        f"{when} in {place['name']}: {_describe(day['weather_code'][index])}, "
+        f"between {round(day['temperature_2m_min'][index])} and "
+        f"{round(day['temperature_2m_max'][index])} {degrees}."
+    )
+    rain = day["precipitation_probability_max"][index]
+    if rain is not None:
+        parts.append(f"A {rain} percent chance of rain.")
+    parts.append(
+        f"Sunrise {_clock(day['sunrise'][index])}, "
+        f"sunset {_clock(day['sunset'][index])}."
+    )
+    return " ".join(parts)
+
+
+def _weekday(stamp: str) -> str:
+    """"2026-08-27" as "Thursday"."""
+    from datetime import date
+    return date.fromisoformat(stamp).strftime("%A")
+
+
+def place_hint() -> dict | None:
+    """Where the speaker is, for the web search tool to narrow results with.
+
+    Comes free: the weather geocoder already looked the town up, and it
+    hands back the region, country and time zone in the form the search
+    tool wants. Without this, "when does the library shut" searches the
+    whole world.
+    """
+    if not config.LOCATION:
+        return None
+    try:
+        place = _find_place()
+    except Exception:
+        return None
+    if place is None:
+        return None
+
+    hint = {"type": "approximate"}
+    if place.get("name"):
+        hint["city"] = place["name"]
+    if place.get("admin1"):
+        hint["region"] = place["admin1"]
+    if place.get("country_code"):
+        hint["country"] = place["country_code"]
+    if place.get("timezone"):
+        hint["timezone"] = place["timezone"]
+    return hint
+
+
 if __name__ == "__main__":
     if {"-h", "--help"} & set(sys.argv):
         print(__doc__)

@@ -18,6 +18,7 @@ import audio_in
 import brain
 import config
 import stt
+import timers
 import tts
 import wake
 import weather
@@ -28,6 +29,7 @@ def run_voice_mode() -> None:
     print("Starting up...")
     the_brain = brain.Brain()
     weather.start()  # Fetches in the background; never blocks a question.
+    timers.start(tts.speak)  # Rings on its own thread, minutes from now.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()
@@ -51,32 +53,48 @@ def run_voice_mode() -> None:
             if not waker.wait_for_wake(mic):
                 break
 
-            # 2. Beep so the person knows it's listening.
-            tts.beep()
-            print("Listening...")
+            # Everything from here to the end of the answer is one turn. A
+            # timer coming due in the middle waits for it: ringing over the
+            # answer is rude, and ringing during step 3 puts a chime in the
+            # middle of the recording, which Whisper duly transcribes as a
+            # word in the question.
+            with timers.turn:
+                # 2. Beep so the person knows it's listening.
+                tts.beep()
+                print("Listening...")
 
-            # 3. Record until they stop talking. The cutoff is worked out
-            # from the room as it sounded just now, not as it sounded when
-            # the speaker was switched on — televisions get turned on.
-            audio = mic.record_until_silence()
+                # 3. Record until they stop talking. The cutoff is worked
+                # out from the room as it sounded just now, not as it
+                # sounded when the speaker was switched on — televisions
+                # get turned on.
+                audio = mic.record_until_silence()
 
-            # 4. Turn the recording into words.
-            question = stt.transcribe(audio)
-            if not question:
-                print("(didn't catch that)")
-                tts.speak("Sorry, I didn't catch that.")
-                continue
-            print(f"You: {question}")
+                # 4. Turn the recording into words.
+                question = stt.transcribe(audio)
+                if not question:
+                    # Nothing was said. With a television on, the wake word
+                    # fires by mistake dozens of times an hour, and this is
+                    # what almost all of those look like — so say nothing
+                    # rather than announcing the mistake to an empty room.
+                    print("(woke up, but nobody was talking)")
+                    continue
+                print(f"You: {question}")
 
-            # 5. Ask Claude, then say the answer out loud.
-            answer = the_brain.ask(question)
-            print(f"Claude: {answer}\n")
-            tts.speak(answer)
+                # 5. Ask Claude, then say the answer out loud.
+                answer = the_brain.ask(question)
+                if not answer:
+                    # Somebody was talking, but not to us — the television
+                    # again. Claude spotted it; see brain.SILENCE.
+                    print(f"(not for me: {question!r})")
+                    continue
+                print(f"Claude: {answer}\n")
+                tts.speak(answer)
 
 
 def run_text_mode() -> None:
     """Type questions instead of speaking them. Handy for testing."""
     the_brain = brain.Brain()
+    timers.start(lambda words: (print(f"\n*** {words}"), tts.speak(words)))
     print("Type a question (or press Enter to quit).\n")
 
     while True:
@@ -88,6 +106,9 @@ def run_text_mode() -> None:
             break
 
         answer = the_brain.ask(question)
+        if not answer:
+            print("(Claude decided that wasn't meant for it.)\n")
+            continue
         print(f"Claude: {answer}\n")
         tts.speak(answer)
 

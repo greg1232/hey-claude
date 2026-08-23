@@ -52,3 +52,10 @@ train/*.tflite
 
 # macOS
 .DS_Store
+
+# Alarms the speaker is still holding. Belongs to the machine, not the repo.
+state/
+
+# Editor swap files
+*.swp
+*.swo

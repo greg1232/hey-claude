@@ -28,6 +28,13 @@ import config
 # so the speaker doesn't hear itself and wake itself up in a loop.
 speaking = threading.Event()
 
+# The sound hardware takes one stream at a time — on the microphone array,
+# playing and listening are literally the same device. There are two threads
+# that talk now, the one answering questions and the one ringing timers, so
+# they queue here rather than racing for it and losing with "Device
+# unavailable".
+_device = threading.Lock()
+
 MACOS = sys.platform == "darwin"
 
 # A short built-in macOS sound, used as the "I'm listening" beep.
@@ -120,14 +127,15 @@ def speak(text: str) -> None:
     if not text:
         return
 
-    speaking.set()
-    try:
-        if MACOS:
-            _say_macos(text)
-        else:
-            _say_linux(text)
-    finally:
-        speaking.clear()
+    with _device:
+        speaking.set()
+        try:
+            if MACOS:
+                _say_macos(text)
+            else:
+                _say_linux(text)
+        finally:
+            speaking.clear()
 
 
 def beep() -> None:
@@ -147,6 +155,7 @@ def beep() -> None:
     loop; a tink is not that.
     """
     if MACOS:
+        # Not under the lock: this one deliberately doesn't wait.
         subprocess.Popen(
             ["afplay", BEEP_SOUND],
             stdout=subprocess.DEVNULL,
@@ -165,7 +174,8 @@ def beep() -> None:
     tone = 0.25 * np.sin(2 * np.pi * 880 * t)
     # Fade both ends, or it clicks.
     fade = np.minimum(np.minimum(t, t[-1] - t) * 60, 1.0)
-    _play(device, rate, (tone * fade * 32767).astype(np.int16))
+    with _device:
+        _play(device, rate, (tone * fade * 32767).astype(np.int16))
 
 
 def _play(device, rate: int, audio) -> None:
