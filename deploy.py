@@ -72,7 +72,19 @@ PIPER_VOICE=en_GB-alan-medium
 # microphone array is better still when the speakers are wired that way:
 # the XVF3800 cancels its own output in hardware.
 INPUT_DEVICE=
-OUTPUT_DEVICE=Array
+# Through PipeWire, not straight at the microphone array.
+#
+# The array allows one program at a time. That was survivable while the
+# speaker was the only thing making a noise, and stopped being survivable
+# the day librespot started playing music: Spotify took the card, and the
+# next thing the speaker tried to say died with "Device unavailable" and
+# took the whole program with it.
+#
+# pipewire-alsa (installed by this script) puts PipeWire in between, so
+# music, speech, a story and a timer can all exist at once. It also hands
+# back the voice's own 22 kHz instead of the array's 16, so answers stop
+# being resampled on the way out.
+OUTPUT_DEVICE=pipewire
 
 # This array arrives about 20 dB down, which sounds like a broken speaker
 # rather than a quiet one. Turn it down here if it's too loud at night;

@@ -76,81 +76,95 @@ def run_voice_mode() -> None:
             # question is recorded over rain and Whisper has to guess
             # through it. It comes back afterwards, unless the question was
             # "stop", in which case there's nothing left to come back.
-            with timers.turn, sounds.paused():
-                # Whatever happens in here — a question, a false wake,
-                # a network error — the ring goes dark again on the way
-                # out. A speaker left glowing blue looks like it is still
-                # listening to you, which is the one thing it must not do
-                # by mistake.
-                try:
-                    # Write down what fired, before anything else touches
-                    # the detector. Whatever woke the speaker is exactly
-                    # the example worth learning from, and the expensive
-                    # part of making it is already paid for.
-                    firing = wake_log.note(waker, getattr(
-                        waker, "last_score", config.WAKE_THRESHOLD))
-                    # And whatever nearly fired just before it, which is
-                    # very likely the same person saying the same thing and
-                    # being missed the first time.
-                    wake_log.flush_near()
+            try:
+                one_turn(mic, waker, the_brain)
+            except Exception as error:
+                # One bad turn must not end the speaker. Before this, a
+                # sound device that was busy for a moment raised out of
+                # tts.speak, through run_voice_mode, and killed the
+                # process — nine times in one afternoon, each time in the
+                # middle of somebody using it.
+                print(f"[turn failed] {type(error).__name__}: {error}")
+                lights.show("idle")
 
-                    # 2. Beep, and light the ring blue, so the person knows
-                    # it's listening. The ring is the half that keeps saying
-                    # so while they're actually talking.
-                    lights.show("listening")
-                    tts.beep()
-                    print("Listening...")
 
-                    # 3. Record until they stop talking. The cutoff is worked
-                    # out from the room as it sounded just now, not as it
-                    # sounded when the speaker was switched on — televisions
-                    # get turned on.
-                    audio = mic.record_until_silence()
+def one_turn(mic, waker, the_brain) -> None:
+    """Everything from the wake word to the end of the answer."""
+    with timers.turn, sounds.paused():
+        # Whatever happens in here — a question, a false wake,
+        # a network error — the ring goes dark again on the way
+        # out. A speaker left glowing blue looks like it is still
+        # listening to you, which is the one thing it must not do
+        # by mistake.
+        try:
+            # Write down what fired, before anything else touches
+            # the detector. Whatever woke the speaker is exactly
+            # the example worth learning from, and the expensive
+            # part of making it is already paid for.
+            firing = wake_log.note(waker, getattr(
+                waker, "last_score", config.WAKE_THRESHOLD))
+            # And whatever nearly fired just before it, which is
+            # very likely the same person saying the same thing and
+            # being missed the first time.
+            wake_log.flush_near()
 
-                    # 4. Turn the recording into words.
-                    lights.show("thinking")
-                    question = stt.transcribe(audio)
-                    if not question:
-                        # Nothing was said. With a television on, the wake word
-                        # fires by mistake dozens of times an hour, and this is
-                        # what almost all of those look like — so say nothing
-                        # rather than announcing the mistake to an empty room.
-                        print("(woke up, but nobody was talking)")
-                        wake_log.outcome(firing, "", False)
-                        continue
-                    print(f"You: {question}")
+            # 2. Beep, and light the ring blue, so the person knows
+            # it's listening. The ring is the half that keeps saying
+            # so while they're actually talking.
+            lights.show("listening")
+            tts.beep()
+            print("Listening...")
 
-                    # 5. Ask Claude, then say the answer out loud.
-                    answer = the_brain.ask(question)
-                    if not answer:
-                        if the_brain.did_something:
-                            # A tool did the job and there is nothing to
-                            # say — "I have spoken" stops the speaker and
-                            # answering would defeat it. Somebody was
-                            # plainly talking to us, so it counts as real.
-                            print("(done, nothing to say)")
-                            wake_log.outcome(firing, question, True)
-                        else:
-                            # Somebody was talking, but not to us — the
-                            # television. Claude spotted it; see
-                            # brain.SILENCE.
-                            print(f"(not for me: {question!r})")
-                            wake_log.outcome(firing, question, False)
-                        continue
+            # 3. Record until they stop talking. The cutoff is worked
+            # out from the room as it sounded just now, not as it
+            # sounded when the speaker was switched on — televisions
+            # get turned on.
+            audio = mic.record_until_silence()
+
+            # 4. Turn the recording into words.
+            lights.show("thinking")
+            question = stt.transcribe(audio)
+            if not question:
+                # Nothing was said. With a television on, the wake word
+                # fires by mistake dozens of times an hour, and this is
+                # what almost all of those look like — so say nothing
+                # rather than announcing the mistake to an empty room.
+                print("(woke up, but nobody was talking)")
+                wake_log.outcome(firing, "", False)
+                return
+            print(f"You: {question}")
+
+            # 5. Ask Claude, then say the answer out loud.
+            answer = the_brain.ask(question)
+            if not answer:
+                if the_brain.did_something:
+                    # A tool did the job and there is nothing to
+                    # say — "I have spoken" stops the speaker and
+                    # answering would defeat it. Somebody was
+                    # plainly talking to us, so it counts as real.
+                    print("(done, nothing to say)")
                     wake_log.outcome(firing, question, True)
-                    print(f"Claude: {answer}\n")
-                    lights.show("speaking")
-                    tts.speak(answer)
+                else:
+                    # Somebody was talking, but not to us — the
+                    # television. Claude spotted it; see
+                    # brain.SILENCE.
+                    print(f"(not for me: {question!r})")
+                    wake_log.outcome(firing, question, False)
+                return
+            wake_log.outcome(firing, question, True)
+            print(f"Claude: {answer}\n")
+            lights.show("speaking")
+            tts.speak(answer)
 
-                    # "Learn my voice" arms a recording rather than doing
-                    # it inside the tool call, because the tool runs before
-                    # the answer is spoken — and the speaker has to finish
-                    # saying "off you go" before it can listen to them go.
-                    if enroll.armed():
-                        lights.show("listening")
-                        enroll.run(mic, waker, tts.speak)
-                finally:
-                    lights.show("idle")
+            # "Learn my voice" arms a recording rather than doing
+            # it inside the tool call, because the tool runs before
+            # the answer is spoken — and the speaker has to finish
+            # saying "off you go" before it can listen to them go.
+            if enroll.armed():
+                lights.show("listening")
+                enroll.run(mic, waker, tts.speak)
+        finally:
+            lights.show("idle")
 
 
 def run_text_mode() -> None:
