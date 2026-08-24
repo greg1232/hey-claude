@@ -139,7 +139,7 @@ def load_log():
     firings = wake_log.read()
     vectors = wake_log.vectors()
 
-    X, y, person = [], [], []
+    X, y, kind, when = [], [], [], []
     thrown = 0
     for firing in firings:
         number = firing["n"]
@@ -153,18 +153,41 @@ def load_log():
             continue
         X.append(vectors[number])
         y.append(int(firing["label"]))
-        person.append(firing.get("by") == "person")
+        kind.append(_kind(firing))
+        when.append(firing.get("at", ""))
     if thrown:
         print(f"  ignored {thrown} labels from the old repetition rule")
     if not X:
         return (np.zeros((0, wake_log.WIDTH), dtype=np.float32),
-                np.zeros(0, dtype=int), np.zeros(0, dtype=bool))
-    return (np.array(X, dtype=np.float32), np.array(y),
-            np.array(person, dtype=bool))
+                np.zeros(0, dtype=int), np.zeros(0, dtype="<U8"),
+                np.zeros(0, dtype="<U32"))
+    return (np.array(X, dtype=np.float32), np.array(y), np.array(kind),
+            np.array(when, dtype="<U32"))
 
 
-def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
-                  say):
+def _kind(firing: dict) -> str:
+    """Where a label came from, which is how much it can be trusted.
+
+      person    somebody listened to the clip and said what it was
+      enrolled  somebody said the wake word into it on purpose, so it is
+                a positive by construction — as certain as a person
+                listening, and a different distribution: deliberate,
+                clear, close, and never the television
+      moved     the same enrolment recordings slid around the window to
+                make more of them. Fine to train on, never to test on:
+                scoring a model on variants of its own training data is
+                marking its own homework
+      machine   a rule guessed from what happened next
+    """
+    if firing.get("by") == "person":
+        return "person"
+    if firing.get("taught"):
+        return "moved" if ":moved" in firing.get("why", "") else "enrolled"
+    return "machine"
+
+
+def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
+                  old, say):
     """Would the new model be better, on firings it has not been shown?
 
     Comparing before and after on the very examples just fitted says only
@@ -203,7 +226,42 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
     # wakes beautifully and says nothing at all about recall. So human
     # labels are used for the classes they cover, and machine labels fill
     # in the class they don't, with the report saying which was which.
-    human = log_person.copy()
+    # What a person can vouch for, one way or another.
+    #
+    # Two kinds. Somebody listened to a clip and said what it was, and
+    # somebody said the wake word into the speaker on purpose during
+    # enrolment — the second is a positive by construction and every bit
+    # as certain, which is why it belongs here and not only in the
+    # training set. What does not belong is the augmented copies of those
+    # recordings: scoring a model on variants of its own training data is
+    # marking its own homework.
+    #
+    # They are held out of the fitting below, so this is a test and not a
+    # memory check. And they are reported apart, because enrolment is
+    # deliberate, clear and close, and spontaneous use is not — if recall
+    # on one is far above the other, that difference is the interesting
+    # thing and should not be averaged away.
+    human = np.isin(log_kind, ("person", "enrolled"))
+
+    # And only what the running model has not already seen.
+    #
+    # Otherwise the comparison is rigged in its favour: the new model is
+    # judged on data held out of its fitting, while the old one is judged
+    # on data it was fitted on. That looked like the running model
+    # catching 100% of everything at a threshold of 0.3, which is not
+    # skill, it is memory. Models carry the time they were fitted, so
+    # anything logged since is fair to both.
+    since = str(old["fitted_at"]) if "fitted_at" in old.files else ""
+    fresh = human & (log_when > since) if since else human
+    if int(fresh.sum()) >= LEAST_TO_JUDGE and len(set(log_y[fresh])) > 1:
+        human = fresh
+        say(f"  judging on the {int(human.sum())} logged since the running "
+            f"model was fitted, which neither has seen")
+    elif since:
+        say(f"  only {int(fresh.sum())} logged since the running model was "
+            "fitted, so judging on everything a person can vouch for — "
+            "which flatters the one already trained on it")
+
     classes = set(log_y[human]) if human.any() else set()
     held = human.copy()
     borrowed = 0
@@ -212,7 +270,7 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
     for missing in (0, 1):
         if missing in classes or human.sum() < LEAST_TO_JUDGE:
             continue
-        could = (~log_person) & (log_y == missing)
+        could = (~human) & (log_kind != "moved") & (log_y == missing)
         if not could.any():
             continue
         # A fifth of them, the same fifth every time, so two runs can be
@@ -222,17 +280,16 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
         borrowed += int(take.sum())
 
     if held.sum() < LEAST_TO_JUDGE or len(set(log_y[held])) < 2:
-        say(f"  only {int(human.sum())} labelled by a person — not enough to "
-            "judge on, so falling back to a random slice")
+        say(f"  only {int(human.sum())} a person can vouch for — not enough "
+            "to judge on, so falling back to a random slice")
         held = rng.random(len(log_X)) < 0.2
         on = "firings held back from the fitting"
     elif borrowed:
-        on = (f"{int(human.sum())} firings a person listened to, plus "
-              f"{borrowed} the machine labelled to cover the other answer")
-        say(f"  judging on {on}")
+        say(f"  judging on {int(human.sum())} a person can vouch for, plus "
+            f"{borrowed} the machine labelled to cover the other answer")
         on = "firings"
     else:
-        on = "firings a person listened to"
+        on = "firings a person can vouch for"
 
     if not held.any() or held.all() or len(set(log_y[~held])) < 2:
         return True, float("nan")
@@ -240,7 +297,8 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
     X = np.vstack([bank_X, log_X[~held]])
     y = np.r_[bank_y, log_y[~held]]
     w = np.r_[np.ones(len(bank_X)),
-              np.where(log_person[~held], weight * BY_PERSON, weight)]
+              np.where(np.isin(log_kind[~held], ("person", "enrolled")),
+                       weight * BY_PERSON, weight)]
     scaler = StandardScaler().fit(X)
     clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
     clf.fit(scaler.transform(X), y, sample_weight=w)
@@ -267,8 +325,17 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
     for name, p in scores.items():
         line, caught, fired = _best_threshold(p, real)
         got[name] = (caught, fired)
+        spoken = (log_kind[held] == "person") & real
+        taught = (log_kind[held] == "enrolled") & real
+        apart = ""
+        if spoken.any() and taught.any():
+            apart = (f"  ({(p[spoken] >= line).mean():.0%} of the ones said "
+                     f"to it, {(p[taught] >= line).mean():.0%} of the ones "
+                     "taught to it)")
         say(f"    {name:6s} at {line:.3f}: catches {caught:5.0%} of the real "
             f"ones, and still fires on {fired:5.1%} of the mistakes")
+        if apart:
+            say(f"           {apart.strip()}")
         if name == "after":
             _chosen = line
 
@@ -304,7 +371,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     # Compare against whatever is actually running, which is the learned
     # one if this machine has already learned something.
     running = LEARNED if LEARNED.exists() else model
-    log_X, log_y, log_person = load_log()
+    log_X, log_y, log_kind, log_when = load_log()
 
     say(f"  bank: {len(bank_X)} features "
           f"({int((bank_y == 1).sum())} wake word, "
@@ -312,7 +379,8 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     say(f"  log:  {len(log_X)} labelled firings "
         f"({int((log_y == 1).sum())} real, "
         f"{int((log_y == 0).sum())} mistakes, "
-        f"{int(log_person.sum())} of them by a person)")
+        f"{int((log_kind == 'person').sum())} of them by a person, "
+        f"{int((log_kind == 'enrolled').sum())} taught on purpose)")
 
     if not len(log_X):
         return "There's nothing labelled to learn from yet."
@@ -327,7 +395,8 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     # guessed from what happened next, and there are far fewer of them —
     # a hundred and forty three human labels against two thousand
     # machine ones is a vote they lose on volume alone.
-    logged = np.where(log_person, weight * BY_PERSON, weight)
+    logged = np.where(np.isin(log_kind, ("person", "enrolled")),
+                      weight * BY_PERSON, weight)
     weights = np.r_[np.ones(len(bank_X)), logged]
 
     import time
@@ -346,7 +415,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
 
     old = np.load(running)
     better, caught_after = _worth_having(
-        bank_X, bank_y, log_X, log_y, log_person, weight, old, say)
+        bank_X, bank_y, log_X, log_y, log_kind, log_when, weight, old, say)
 
     if dry:
         say("  --dry, so nothing written.")

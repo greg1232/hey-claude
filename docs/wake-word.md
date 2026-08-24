@@ -401,6 +401,48 @@ Without it, retraining still works and simply says nothing is archived.
 
 ### What the gate judges on
 
+Two kinds of label a person can vouch for, and they are both used:
+
+- **Somebody listened to the clip** and said what it was (`./label.sh`).
+- **Somebody said the wake word into it on purpose**, during enrolment.
+  That is a positive by construction and every bit as certain.
+
+What is *not* used for judging is the augmented copies of those enrolment
+recordings — the same audio slid around the window to make more of it.
+Fine to train on; scoring a model on variants of its own training data is
+marking its own homework.
+
+The two are reported apart, because enrolment is deliberate, clear and
+close and spontaneous use is not:
+
+```
+after at 0.665: catches 88% of the real ones, and still fires on 14.9%
+       (80% of the ones said to it, 89% of the ones taught to it)
+```
+
+If those two numbers drift far apart, that gap is the interesting thing and
+should not be averaged away.
+
+### And only on what neither model has seen
+
+Holding examples out of the new fit is not enough on its own. The old model
+was fitted on everything available at the time, so judging both on the same
+set tests the new one on held-out data and the old one on its own homework.
+That looked like the running model catching **100% of everything at a
+threshold of 0.3**, which is not skill, it is memory.
+
+Models carry the time they were fitted, so anything logged since is fair to
+both. When there is not enough of it the older set is used and the report
+says so plainly, rather than quietly producing a number that favours
+whatever is already installed:
+
+```
+only 0 logged since the running model was fitted, so judging on everything
+a person can vouch for — which flatters the one already trained on it
+```
+
+
+
 Somebody who sat and listened to a clip is the only ground truth here, so
 that is what the promotion gate measures against — not a random slice of
 everything, which was measuring agreement with the machine's own guesses
