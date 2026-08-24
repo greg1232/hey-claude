@@ -119,7 +119,12 @@ OUTPUT_VOLUME=100
 #     python train/test_wake.py --times 6
 #     python src/wake_log.py
 WAKE_MODEL=hey_claude_whisper.npz
-WAKE_THRESHOLD=0.95
+# Left unset on purpose. A model fitted by train/relearn.py carries the
+# operating point its own sweep chose, and two models are not comparable at
+# a single number — they sit on different score distributions, so the same
+# threshold means different things to each. Set this only to argue with the
+# sweep.
+# WAKE_THRESHOLD=0.95
 
 # How often the Whisper wake word looks, in seconds. About 42% of one core
 # at 0.4 on a Pi 4. Raise it to spend less, and be noticed a little later.

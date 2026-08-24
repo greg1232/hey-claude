@@ -73,6 +73,17 @@ class WhisperWakeDetector:
         self.last_audio: np.ndarray | None = None
         self.last_score = 0.0
 
+        # How sure it has to be. The model carries the operating point the
+        # sweep chose for it, because a threshold is not comparable between
+        # two models — they sit on different score distributions, and the
+        # same number means different things. A WAKE_THRESHOLD in .env
+        # overrides it, for when you want to argue with the sweep.
+        self.threshold = config.WAKE_THRESHOLD
+        carried = float(weights["threshold"]) if "threshold" in weights.files \
+            else 0.0
+        if carried and not config.WAKE_THRESHOLD_SET:
+            self.threshold = carried
+
         phrase = model_path.stem.split("_whisper")[0].split("-")[0]
         self.label = f"say '{phrase.replace('_', ' ')}'"
 
@@ -85,6 +96,8 @@ class WhisperWakeDetector:
             print(f"  fitted {str(weights.get('fitted_at', ''))[:16]} on "
                   f"{int(weights.get('examples', 0))} logged examples, "
                   f"dataset {str(weights['dataset'])[:8]}")
+        print(f"  wakes at {self.threshold:.3f}"
+              + ("" if config.WAKE_THRESHOLD_SET else " (chosen by the sweep)"))
 
     def _read(self):
         weights = np.load(self._path)
@@ -157,11 +170,11 @@ class WhisperWakeDetector:
             if chunk is None:
                 continue
             score = self.observe(chunk)
-            if score is not None and score < config.WAKE_THRESHOLD:
+            if score is not None and score < self.threshold:
                 # Close, but not close enough. Might have been somebody
                 # saying it — see wake_log.consider().
                 wake_log.consider(self, score)
-            if score is not None and score >= config.WAKE_THRESHOLD:
+            if score is not None and score >= self.threshold:
                 # Hold on to what fired before reset() wipes the buffer.
                 fired_on = (self.last_vector, self.last_audio, score)
                 self.reset()

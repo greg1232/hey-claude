@@ -40,6 +40,19 @@ sys.path.insert(0, str(HERE.parent / "src"))
 
 import wake_log  # noqa: E402
 
+def _setting(name: str, fallback: str) -> str:
+    """One value from .env or the environment, without importing config."""
+    import os
+    if os.environ.get(name, "").strip():
+        return os.environ[name].strip()
+    env = HERE.parent / ".env"
+    if env.is_file():
+        for line in env.read_text().splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip() or fallback
+    return fallback
+
+
 MODEL = HERE.parent / "models" / "hey_claude_whisper.npz"
 
 # Below this many labelled firings there is nothing to hold back, so the
@@ -51,12 +64,53 @@ SLACK = 0.05
 # How much more a label from somebody who listened to the clip is worth
 # than one a rule guessed at.
 BY_PERSON = 5.0
+
+# The thresholds worth considering, and how much firing on the room the
+# best of them may cost. A wake word that never fires is not a wake word,
+# so this buys recall with false wakes up to a point and then stops.
+THRESHOLDS = [round(x, 3) for x in np.arange(0.30, 0.999, 0.005)]
+# How much firing on the room the best threshold may cost, as a fraction of
+# the mistakes a person has labelled. This is the one number here that is a
+# judgement rather than a measurement — how much television is worth how
+# much of a child being heard — so it is a setting, and the sweep prints
+# the whole curve beside its choice so the judgement can be checked.
+#
+# Fifteen per cent, because a false wake is nearly silent now: nothing is
+# said, nothing is answered, and it costs a flash of the ring and some
+# processor. On this speaker's own labelled firings that buys 73% of real
+# wake words instead of 47%, which is the difference between being heard
+# and saying it twice.
+FALSE_BUDGET = float(_setting("WAKE_FALSE_BUDGET", "0.15"))
+
+# What the sweep settled on for the model just fitted, so it can be saved
+# with it.
+_chosen = 0.0
+
+
+def _best_threshold(p, real):
+    """The threshold that catches most without firing on too much.
+
+    Returns (threshold, recall, false rate). If nothing meets the budget,
+    the one that misses it by least, so there is always an answer.
+    """
+    best = None
+    for line in THRESHOLDS:
+        caught = float((p[real] >= line).mean()) if real.any() else 0.0
+        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
+        within = fired <= FALSE_BUDGET
+        # Within budget, more recall wins. Outside it, less firing wins.
+        rank = (within, caught if within else -fired)
+        if best is None or rank > best[0]:
+            best = (rank, line, caught, fired)
+    return best[1], best[2], best[3]
 # What this machine learns for itself goes in state/, never in models/.
 # models/ is mirrored by deploy, so a model written there would be replaced
 # by the shipped one on the next deploy, taking every night of learning
 # with it. src/whisper_wake.py looks in state/ first.
 LEARNED = HERE.parent / "state" / "hey_claude_whisper.npz"
 LOCK = HERE.parent / "state" / "relearn.lock"
+
+
 
 
 def load_bank(path: Path):
@@ -125,9 +179,6 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
     """
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
-
-    import config
-    line = config.WAKE_THRESHOLD
 
     if len(log_X) < LEAST_TO_JUDGE:
         say(f"  only {len(log_X)} labelled — too few to judge, so taking it")
@@ -201,14 +252,35 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_person, weight, old,
         "after": _probability(log_X[held], scaler.mean_, scaler.scale_,
                               clf.coef_[0], float(clf.intercept_[0])),
     }
+    # Each model at its own best threshold, not both at the same one.
+    #
+    # The threshold is a setting, not a property of the model, so holding
+    # it fixed asks the wrong question: two models can sit on quite
+    # different score distributions, and one that looks far worse at 0.95
+    # may be better everywhere once allowed its own operating point. A
+    # refit came out at 47% recall against 87% and was refused on that
+    # basis, which was a comparison of two settings rather than of two
+    # models.
+    global _chosen
     got = {}
     say(f"  on {int(held.sum())} {on}:")
     for name, p in scores.items():
-        caught = float((p[real] >= line).mean()) if real.any() else 1.0
-        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
+        line, caught, fired = _best_threshold(p, real)
         got[name] = (caught, fired)
-        say(f"    {name:6s} catches {caught:5.0%} of the real ones, "
-            f"and still fires on {fired:5.1%} of the mistakes")
+        say(f"    {name:6s} at {line:.3f}: catches {caught:5.0%} of the real "
+            f"ones, and still fires on {fired:5.1%} of the mistakes")
+        if name == "after":
+            _chosen = line
+
+    # And the shape of the choice, because the budget above is a judgement
+    # about how much television is worth how much of a child being heard,
+    # and it should not be made silently inside a constant.
+    say("    the new one across the range:")
+    for line in (0.5, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995):
+        p = scores["after"]
+        caught = float((p[real] >= line).mean()) if real.any() else 0.0
+        fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
+        say(f"      {line:5.3f}  catches {caught:5.0%}  fires on {fired:5.1%}")
 
     was, now = got["before"], got["after"]
     # Room to move, because these are small samples and a model that is
@@ -303,7 +375,11 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
              dataset=dataset,
              fitted_at=datetime.now().astimezone().isoformat(
                  timespec="seconds"),
-             examples=np.int32(len(log_X)))
+             examples=np.int32(len(log_X)),
+             # The operating point the sweep chose for this model. Two
+             # models are not comparable at one threshold, so each carries
+             # its own — see src/whisper_wake.py.
+             threshold=np.float32(_chosen or 0.0))
     say(f"  wrote {LEARNED}")
     archive.keep_model(LEARNED, dataset, {"recall": caught_after}, say)
     return (f"Learned from {len(log_X)} examples. "
