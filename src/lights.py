@@ -39,6 +39,7 @@ denied" once, and then the lights are off for the rest of the run.
 import struct
 import sys
 import threading
+import time
 
 import config
 
@@ -68,6 +69,13 @@ STATES = {
 _lock = threading.Lock()
 _device = None
 _broken = False
+_failures = 0
+
+# A USB control transfer to a device that is also streaming audio fails now
+# and then — "Input/Output Error", and it works again a second later. Giving
+# up for the rest of the run on the first of those turned a flicker into a
+# dark ring for the evening, so it takes this many in a row.
+GIVE_UP_AFTER = 8
 
 
 def _connect():
@@ -101,10 +109,12 @@ def _connect():
 
 def show(state: str) -> None:
     """Put the ring into one of the states above."""
+    global _failures
     if not config.LEDS or _broken:
         return
 
     effect, colour, speed = STATES.get(state, STATES["idle"])
+    before = _failures
     with _lock:
         _send(EFFECT, bytes([effect]))
         if effect != OFF:
@@ -112,6 +122,8 @@ def show(state: str) -> None:
             _send(BRIGHTNESS, bytes([config.LED_BRIGHTNESS]))
         if speed:
             _send(SPEED, bytes([speed]))
+    if _failures == before:
+        _failures = 0   # A whole state change went through. Forget the past.
 
 
 def _send(command: int, payload: bytes) -> None:
@@ -123,16 +135,29 @@ def _send(command: int, payload: bytes) -> None:
 
     try:
         import usb.util
-        device.ctrl_transfer(
-            usb.util.CTRL_OUT | usb.util.CTRL_TYPE_VENDOR
-            | usb.util.CTRL_RECIPIENT_DEVICE,
-            0, command, LED_RESOURCE, payload, 2000)
+
+        out = (usb.util.CTRL_OUT | usb.util.CTRL_TYPE_VENDOR
+               | usb.util.CTRL_RECIPIENT_DEVICE)
+        try:
+            device.ctrl_transfer(out, 0, command, LED_RESOURCE, payload, 2000)
+        except Exception:
+            # Once more. The array is busy playing something more often
+            # than not, and a retry a moment later almost always works.
+            time.sleep(0.05)
+            device.ctrl_transfer(out, 0, command, LED_RESOURCE, payload, 2000)
     except Exception as error:
-        print(f"[lights] off for the rest of this run ({error})")
+        global _failures
+        _failures += 1
         if "denied" in str(error).lower():
+            print(f"[lights] off for the rest of this run ({error})")
             print("[lights] run ./deploy.sh once to add the udev rule "
                   "that allows this")
-        _broken = True
+            _broken = True
+            return
+        if _failures >= GIVE_UP_AFTER:
+            print(f"[lights] off for the rest of this run — {_failures} "
+                  f"failures in a row, last was {error}")
+            _broken = True
 
 
 if __name__ == "__main__":

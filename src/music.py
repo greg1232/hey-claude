@@ -58,6 +58,22 @@ MOST = 10
 DUCK_TO = 0.2
 
 
+def _quietly(what: str, error) -> None:
+    """Say a Spotify problem once, not once a minute.
+
+    A speaker that answers questions all evening does this on every turn,
+    and a line per turn is how a log stops being read.
+    """
+    global _no_ducking
+    if "403" in str(error):
+        # The device won't be told what volume to be. It never will be, so
+        # stop asking.
+        _no_ducking = True
+        print(f"[music] {what}: this device won't allow it — not trying again")
+        return
+    print(f"[music] {what}: {type(error).__name__}")
+
+
 def _nothing_playing(error) -> bool:
     """Spotify answers 404 when there is no active device.
 
@@ -71,6 +87,7 @@ _token = ""
 _token_until = 0.0
 _offered: list[dict] = []
 _ducked_from: int | None = None
+_no_ducking = False
 
 
 def ready() -> bool:
@@ -131,6 +148,12 @@ def _call(method: str, path: str, body: dict | None = None):
         return {}
 
 
+def _ours(join: str = "?") -> str:
+    """`device_id=` for this speaker, so commands land here and not in a car."""
+    mine = _speaker_id()
+    return f"{join}device_id={mine}" if mine else ""
+
+
 def _speaker_id() -> str | None:
     """The Pi's own Spotify device, by the name librespot advertises."""
     wanted = config.SPOTIFY_DEVICE.strip().lower()
@@ -144,9 +167,16 @@ def _speaker_id() -> str | None:
 
 
 def duck() -> None:
-    """Pull the music down while the speaker talks."""
-    global _ducked_from
-    if not ready():
+    """Pull the music down while the speaker talks — our music, at least.
+
+    Only ever this speaker's own playback. An account is signed in to
+    several things, and ducking whatever it happens to be playing
+    elsewhere is both wrong and impossible: this spent an evening trying
+    to turn down a Tesla, once every time it answered a question, and
+    being told 403 Cannot control device volume by a car.
+    """
+    global _ducked_from, _no_ducking
+    if not ready() or _no_ducking:
         return
     try:
         with _lock:
@@ -156,13 +186,19 @@ def duck() -> None:
             now = _call("GET", "/me/player")
             if not now or not now.get("is_playing"):
                 return
-            was = (now.get("device") or {}).get("volume_percent")
+            device = now.get("device") or {}
+            if device.get("id") != _speaker_id():
+                return          # Somebody else's speaker. Not ours to touch.
+            if not device.get("supports_volume", True):
+                return
+            was = device.get("volume_percent")
             if was is None:
                 return
             _ducked_from = was
         _call("PUT", f"/me/player/volume?volume_percent={int(was * DUCK_TO)}")
     except Exception as error:
-        print(f"[music] couldn't duck: {type(error).__name__}")
+        _ducked_from = None
+        _quietly("couldn't duck", error)
 
 
 def unduck() -> None:
@@ -177,7 +213,7 @@ def unduck() -> None:
     try:
         _call("PUT", f"/me/player/volume?volume_percent={int(was)}")
     except Exception as error:
-        print(f"[music] couldn't put the volume back: {type(error).__name__}")
+        _quietly("couldn't put the volume back", error)
 
 
 sounds.also_pause(duck, unduck)
@@ -298,9 +334,9 @@ def play_music(number: int) -> str:
 def pause_music(what: str) -> str:
     try:
         if what.strip().lower().startswith(("play", "resume", "carry", "un")):
-            _call("PUT", "/me/player/play")
+            _call("PUT", "/me/player/play" + _ours())
             return "Music going again."
-        _call("PUT", "/me/player/pause")
+        _call("PUT", "/me/player/pause" + _ours())
         return "Music paused."
     except Exception as error:
         if not _nothing_playing(error):
@@ -317,9 +353,9 @@ def pause_music(what: str) -> str:
 def skip_music(which: str) -> str:
     try:
         if which.strip().lower().startswith(("back", "prev", "last")):
-            _call("POST", "/me/player/previous")
+            _call("POST", "/me/player/previous" + _ours())
             return "Went back one."
-        _call("POST", "/me/player/next")
+        _call("POST", "/me/player/next" + _ours())
         time.sleep(0.6)   # Give Spotify a moment to load the next one.
         return f"Skipped. Now playing {now_playing()}."
     except Exception as error:
@@ -380,7 +416,8 @@ def music_volume(level: str) -> str:
                 # right now would undo what was just asked for.
                 _ducked_from = wanted
                 return f"Music at {wanted} percent."
-        _call("PUT", f"/me/player/volume?volume_percent={wanted}")
+        _call("PUT", f"/me/player/volume?volume_percent={wanted}"
+              + _ours("&"))
     except Exception as error:
         print(f"[music] {type(error).__name__}: {error}")
         return "I couldn't change the volume."
