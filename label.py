@@ -199,6 +199,24 @@ def marked() -> tuple[int, int]:
     return sum(known.values()), len(known)
 
 
+def already() -> tuple[int, int]:
+    """How many yes and no answers a person has given before today."""
+    index = CACHE / "wakes.jsonl"
+    if not index.exists():
+        return 0, 0
+    rows: dict[int, dict] = {}
+    for line in index.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if "n" in row:
+            rows.setdefault(row["n"], {}).update(row)
+    mine = [r for r in rows.values() if r.get("by") == "person"]
+    return (sum(1 for r in mine if r.get("label") == 1),
+            sum(1 for r in mine if r.get("label") == 0))
+
+
 def push(pi: str) -> int:
     """Send the answers back, as lines appended to the Pi's log.
 
@@ -464,11 +482,31 @@ def main() -> int:
             print("  The ones you missed are worth hearing again — either "
                   "they are hard,\n  or it was time to stop.")
 
+    was_yes, was_no = already()
+    mine = [label for number, label in _answers.items() if number >= 0]
+    yes, no = mine.count(1), mine.count(0)
+
     sent = push(pi)
-    print(f"Saved {sent} answer{'s' if sent != 1 else ''} to the Pi."
-          if sent else "Nothing to save.")
-    if sent:
-        print("Now teach it:  ./relearn.sh")
+    if not sent:
+        print("Nothing to save.")
+        return 0
+
+    print(f"Saved {sent} answer{'s' if sent != 1 else ''} to the Pi: "
+          f"{yes} yes, {no} no.")
+    # The yes answers are the scarce half and the interesting number. The
+    # first two hundred labels here were 202 no and 1 yes, which measures
+    # false wakes perfectly and says nothing at all about whether the
+    # speaker hears anybody.
+    print(f"  {was_yes + yes} yes and {was_no + no} no altogether.")
+    if yes:
+        print(f"  {yes} more example{'s' if yes != 1 else ''} of somebody "
+              "actually being heard — those are the ones\n  the retraining "
+              "measures recall against.")
+    else:
+        print("  No yes answers this time. Recall can only be measured "
+              "against those,\n  so it's worth using the speaker a few "
+              "times and labelling again.")
+    print("\nNow teach it:  ./relearn.sh")
     return 0
 
 

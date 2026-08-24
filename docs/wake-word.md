@@ -283,6 +283,19 @@ Nothing to install and nothing runs on the Pi: it copies the clips down,
 serves them from your laptop on a free port, and appends your answers when
 you stop.
 
+When you stop, it says what you found:
+
+```
+Saved 60 answers to the Pi: 8 yes, 52 no.
+  23 yes and 300 no altogether.
+  8 more examples of somebody actually being heard — those are the ones
+  the retraining measures recall against.
+```
+
+The yes answers are the scarce half and the number worth watching. The
+first two hundred labels here were 202 no and 1 yes, which measures false
+wakes perfectly and says nothing about whether the speaker hears anybody.
+
 It picks the firings the machine could not label by itself, because those
 are the ones it will be fitted on either way, then near misses somebody
 repeated seconds later, which are the recall failures and cannot be found
