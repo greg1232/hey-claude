@@ -58,6 +58,9 @@ MODEL = HERE.parent / "models" / "hey_claude_whisper.npz"
 # Below this many labelled firings there is nothing to hold back, so the
 # new model is taken on trust — it can only be the bank plus a handful.
 LEAST_TO_JUDGE = 25
+# And how many of those have to be the wake word before a recall figure
+# means anything. With one, recall is 0% or 100% and nothing between.
+ENOUGH_POSITIVES = 8
 # How much worse a new model may be and still be taken, since these are
 # small samples and being the same within noise is not a reason to refuse.
 SLACK = 0.05
@@ -90,16 +93,21 @@ _chosen = 0.0
 def _best_threshold(p, real):
     """The threshold that catches most without firing on too much.
 
-    Returns (threshold, recall, false rate). If nothing meets the budget,
-    the one that misses it by least, so there is always an answer.
+    Returns (threshold, recall, false rate).
+
+    When no threshold meets the budget this used to fall back to the one
+    that fired least, which is the strictest one, where a wake word
+    catches nothing at all. That is how a retraining came back saying "I
+    now catch 0% of the ones I have on file" — not a model that had
+    learned nothing, a fallback that had chosen silence. It balances the
+    two now, which at worst gives something usable.
     """
     best = None
     for line in THRESHOLDS:
         caught = float((p[real] >= line).mean()) if real.any() else 0.0
         fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
         within = fired <= FALSE_BUDGET
-        # Within budget, more recall wins. Outside it, less firing wins.
-        rank = (within, caught if within else -fired)
+        rank = (within, caught if within else caught - 2 * fired)
         if best is None or rank > best[0]:
             best = (rank, line, caught, fired)
     return best[1], best[2], best[3]
@@ -321,7 +329,16 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     # models.
     global _chosen
     got = {}
+    positives = int(real.sum())
     say(f"  on {int(held.sum())} {on}:")
+    if positives < ENOUGH_POSITIVES:
+        # A recall percentage from one clip is 0% or 100% and nothing
+        # else. Saying so is the difference between a number and a
+        # measurement, and this said "I now catch 0%" off a single clip
+        # that happened to score low.
+        say(f"    only {positives} of them are the wake word, so the recall "
+            "figures below are\n    barely a measurement — label a few "
+            "more with ./label.sh")
     for name, p in scores.items():
         line, caught, fired = _best_threshold(p, real)
         got[name] = (caught, fired)
