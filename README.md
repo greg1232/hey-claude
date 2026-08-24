@@ -2,14 +2,20 @@
 
 A speaker you talk to, and it talks back.
 
-Say the wake word, ask a question out loud, and the laptop answers out loud.
-The design is in [docs/design.md](docs/design.md); this file is how to run it.
+Say the wake word, ask a question out loud, and it answers out loud. It runs
+on a laptop, and properly on a Raspberry Pi with a microphone array.
 
 ```
- you ──"hey ..."──►  wake word  ──►  record  ──►  Whisper  ──►  Claude
-                                                                  │
- you  ◄────── speakers ◄────── macOS "say" ◄──────────────────────┘
+ you ──"hey claude"──►  wake word  ──►  record  ──►  Whisper  ──►  Claude
+                                                                     │
+ you  ◄────── speakers ◄────── Piper ◄─────────── tools ◄────────────┘
+                                                  timers, rain, books,
+                                                  music, the weather…
 ```
+
+Everything up to Claude runs on the machine itself: the wake word, the
+speech recognition and the voice. Nothing is sent anywhere until there's a
+question to ask.
 
 ## Setup
 
@@ -57,21 +63,44 @@ python src/main.py           # the real thing — say the wake word
 python src/main.py --text    # type questions instead of speaking them
 ```
 
-Press Ctrl-C to stop. On a Raspberry Pi, use `./start.sh` instead — it runs
-in the background and writes a log. See
-[Putting it on a Raspberry Pi](#putting-it-on-a-raspberry-pi).
+Press Ctrl-C to stop. On the Pi it runs as a service, and `./start.sh`
+starts, stops and reports on that — see
+[docs/raspberry-pi.md](docs/raspberry-pi.md).
+
+## Living with it
+
+Five commands, all from this folder on the laptop:
+
+```bash
+./deploy.sh              # put the current code on the Pi
+./start.sh --status      # (on the Pi) is it running
+./wishes.sh              # what it was asked for and couldn't do
+./label.sh               # listen to what woke it, and say if it was right
+./relearn.sh             # teach it from today — it also runs itself at 4am
+```
+
+`./label.sh` is the one worth a few minutes a week. It plays back the clips
+that woke the speaker and you answer yes or no; those answers are what the
+retraining is judged against, and they are the only ground truth the
+project has. See [docs/wake-word.md](docs/wake-word.md).
 
 ## Trying one piece at a time
 
 Each file runs on its own, which makes it easy to find what's broken:
 
 ```bash
-python src/tts.py            # 1. make the laptop talk
+python src/tts.py            # 1. make it talk
 python src/brain.py          # 2. type a question, hear Claude answer
 python src/audio_in.py       # 3. record you until you stop talking
 python src/stt.py            # 4. record you and print what it heard
 python src/wake.py           # 5. wake up three times, then stop
 python src/config.py         #    print every setting it will actually use
+python src/tools.py          #    list every tool Claude is offered
+python src/sounds.py rain    #    a sound made from filtered noise
+python src/effects.py owl    #    look a real recording up and play it
+python src/books.py --shelf  #    the children's shelf, from 48,284 books
+python src/music.py          #    what Spotify is playing, and where
+python src/wake_log.py       #    what has woken it, and how those went
 ```
 
 Every script takes `--help`, including the ones in `train/`.
@@ -100,6 +129,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/music.py` | Spotify — search, play, skip, volume |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
+| `src/eggs.py` | The things it does that nobody told you about |
 | `src/wishes.py` | Writes down what it was asked for and can't do |
 | **Training and setup** | |
 | `train/record_wake.py` | Records people saying the wake word |
@@ -112,7 +142,9 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
+| **On the laptop** | |
 | `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh` runs it) |
+| `start.py` | Starts and stops the service (`./start.sh` runs it) |
 | `wishes.py` | Reads the wishes off the Pi (`./wishes.sh` runs it) |
 | `label.py` | Listen to what woke it and say if it was right (`./label.sh`) |
 | `relearn.py` | Make it learn from today, now (`./relearn.sh` runs it) |
@@ -138,6 +170,10 @@ voice all run on the machine itself.
 "hey claude, can you keep score for our game"    <- writes down a wish
 ```
 
+There are also ten things it does that aren't written down here, from
+Groot to Mark Rober. They're meant to be found by accident; if you need to
+know, they're in `src/eggs.py`.
+
 Each is a tool. See **[docs/capabilities.md](docs/capabilities.md)** for
 what each one does and how to set the ones up that need keys.
 
@@ -158,15 +194,20 @@ Not built, roughly in order of how much they'd improve an evening with it:
 
 - **A follow-up window.** Keep listening for a few seconds after answering,
   so a conversation doesn't need the wake word every turn. The single
-  biggest change to how it feels to use.
-- **Barge-in.** You can't interrupt it mid-answer: incoming audio is thrown
-  away while it talks. Unusually, this speaker *could* — the array cancels
-  its own output in hardware, which is the same trick that lets the wake
-  word be heard over rain.
-- **More nights of wake-word data.** The learning loop works and one night
-  of negatives is not enough to generalise; see
-  [docs/wake-word.md](docs/wake-word.md).
+  biggest change to how it feels to use, and nothing stands in the way.
+- **Barge-in.** Half of it exists: "I have spoken" stops it mid-sentence,
+  and speech is now cut between tenth-of-a-second blocks. The other half is
+  hard — with the microphone left open the speaker's own voice scores 0.991
+  against a 0.95 threshold, so it interrupts *itself* on about one sentence
+  in four. The fix is training data, and it's free to make: play, record,
+  label every window a negative.
+- **Human "yes" labels.** The learning loop works and the gate refuses bad
+  models, but of 203 answers a person has given, 202 were "no" — which
+  measures false wakes and says nothing about recall. Confirming a dozen
+  real firings would fix that. See [docs/wake-word.md](docs/wake-word.md).
 - **Memory between runs.** It forgets everything when it restarts,
   including who it is talking to.
 - **Children's speech.** `tiny.en` is where small Whisper models struggle
   most, and a misheard question is indistinguishable from a dumb answer.
+  Fine-tuning on children's speech is unusually well evidenced — around a
+  third off the error rate — and the recordings are already in this repo.
