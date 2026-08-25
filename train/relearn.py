@@ -68,6 +68,24 @@ SLACK = 0.05
 # than one a rule guessed at.
 BY_PERSON = 5.0
 
+# How hard to hold the fit back. Small numbers mean more regularisation.
+#
+# This was 0.1, inherited from the trainer that built the bank, and it was
+# the single biggest thing wrong with the recipe. Measured by five-fold
+# cross-validation over the log — see train/evaluate.py — at the strictest
+# threshold that still fires on no more than a tenth of known mistakes:
+#
+#     C=1.0    catches 75%, and 62% of the ones said to it
+#     C=0.1    catches 85%, and 79%          (what it was)
+#     C=0.01   catches 95%, and 90%
+#     C=0.001  catches 99%, and 97%          (what it is)
+#
+# Seven hundred and sixty eight features against a few thousand rows is a
+# lot of room to overfit, and it was taking all of it. Weighting the human
+# labels 1x, 5x or 20x moved nothing by comparison, and a small neural net
+# in place of the regression matched C=0.001 without beating it.
+FIT_HELD_BACK = float(_setting("WAKE_FIT_C", "0.001"))
+
 # The thresholds worth considering, and how much firing on the room the
 # best of them may cost. A wake word that never fires is not a wake word,
 # so this buys recall with false wakes up to a point and then stops.
@@ -308,7 +326,7 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
               np.where(np.isin(log_kind[~held], ("person", "enrolled")),
                        weight * BY_PERSON, weight)]
     scaler = StandardScaler().fit(X)
-    clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
+    clf = LogisticRegression(max_iter=5000, C=FIT_HELD_BACK, class_weight="balanced")
     clf.fit(scaler.transform(X), y, sample_weight=w)
 
     real = log_y[held] == 1
@@ -419,7 +437,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     import time
     began = time.monotonic()
     scaler = StandardScaler().fit(X)
-    clf = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
+    clf = LogisticRegression(max_iter=5000, C=FIT_HELD_BACK, class_weight="balanced")
     clf.fit(scaler.transform(X), y, sample_weight=weights)
     say(f"  fitted {len(X)} x {X.shape[1]} in "
         f"{time.monotonic() - began:.2f}s")

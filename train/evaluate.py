@@ -52,14 +52,66 @@ LINES = (0.30, 0.50, 0.70, 0.80, 0.90, 0.95, 0.975, 0.99)
 FOLDS = 5
 
 
-def fit(X, y, weights):
+def fit(X, y, weights, recipe=None):
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
 
+    recipe = recipe or {}
     scaler = StandardScaler().fit(X)
-    model = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced")
+    if recipe.get("head") == "mlp":
+        from sklearn.neural_network import MLPClassifier
+        model = MLPClassifier(hidden_layer_sizes=(64,), max_iter=400,
+                              alpha=1.0, random_state=0)
+        model.fit(scaler.transform(X), y)   # no sample weights in sklearn's
+        return scaler, model
+    model = LogisticRegression(max_iter=5000, C=recipe.get("C", 0.1),
+                               class_weight="balanced")
     model.fit(scaler.transform(X), y, sample_weight=weights)
     return scaler, model
+
+
+# Things worth trying, and the one number that says whether they helped.
+# Everything is measured at the strictest threshold that still fires on no
+# more than a tenth of known mistakes, because a recall figure without a
+# false-wake figure beside it means nothing.
+RECIPES = {
+    "as it is now": {},
+    "without the machine's guesses": {"machine": False},
+    "without the augmented enrolment copies": {"moved": False},
+    "human labels weighted 1x not 5x": {"by_person": 1.0},
+    "human labels weighted 20x": {"by_person": 20.0},
+    "less regularised (C=1)": {"C": 1.0},
+    "more regularised (C=0.01)": {"C": 0.01},
+    "a small neural net instead": {"head": "mlp"},
+    # C fell monotonically — 1.0 gave 75%, 0.1 gave 85%, 0.01 gave 95% —
+    # so it had not obviously bottomed out.
+    "more regularised still (C=0.003)": {"C": 0.003},
+    "much more regularised (C=0.001)": {"C": 0.001},
+    "hardly fitted at all (C=0.0003)": {"C": 0.0003},
+    "C=0.01 and no machine guesses": {"C": 0.01, "machine": False},
+    "C=0.003 and no machine guesses": {"C": 0.003, "machine": False},
+    # The overall figure is flattered by a leak the "said to it" column is
+    # free of: the augmented copies of an enrolment recording stay in
+    # training even when the recording itself is in the test fold, and a
+    # near-duplicate of the thing you are testing on is a leak. There is no
+    # link stored from a copy back to its original, so the only way to be
+    # sure is to leave the copies out altogether.
+    "C=0.001 with no copies at all": {"C": 0.001, "moved": False},
+}
+AT_MOST_FALSE = 0.10
+
+
+def recall_at(p, real, mistakes, budget=AT_MOST_FALSE):
+    """Recall at the best threshold that keeps false wakes under budget."""
+    best = (0.0, 0.0, 1.0)
+    for line in np.arange(0.05, 0.999, 0.005):
+        fired = float(np.mean(p[mistakes] >= line))
+        if fired > budget:
+            continue
+        caught = float(np.mean(p[real] >= line))
+        if caught > best[0]:
+            best = (caught, line, fired)
+    return best
 
 
 def score(scaler, model, X):
@@ -82,6 +134,11 @@ def main() -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--folds", type=int, default=FOLDS)
+    parser.add_argument("--only", default="",
+                        help="only recipes whose name contains this")
+    parser.add_argument("--compare", action="store_true",
+                        help="cross-validate several training recipes and "
+                             "say which is best")
     args = parser.parse_args()
     say = print
 
@@ -143,7 +200,68 @@ def main() -> int:
         "they came from.")
     say("  Enrolment is deliberate and close; being called across a room "
         "is not.")
+
+    if args.compare:
+        compare(bank_X, bank_y, X, y, kind, vouched, real, said, taught,
+                mistakes, args.folds, say, args.only)
     return 0
+
+
+def cross_validate(bank_X, bank_y, X, y, kind, vouched, folds, recipe, rng):
+    """Out-of-fold scores for every vouched row, under one recipe."""
+    where = np.flatnonzero(vouched)
+    fold = np.zeros(len(X), dtype=int) - 1
+    for label in (0, 1):
+        rows = where[y[where] == label]
+        rows = rows[rng.permutation(len(rows))]
+        fold[rows] = np.arange(len(rows)) % folds
+
+    # What this recipe is allowed to learn from at all.
+    allowed = np.ones(len(X), dtype=bool)
+    if recipe.get("machine") is False:
+        allowed &= (kind != "machine")
+    if recipe.get("moved") is False:
+        allowed &= (kind != "moved")
+
+    by_person = recipe.get("by_person", relearn.BY_PERSON)
+    out = np.zeros(len(X))
+    for number in range(folds):
+        train = allowed & (fold != number)
+        test = (fold == number)
+        weights = np.r_[
+            np.ones(len(bank_X)),
+            np.where(np.isin(kind[train], ("person", "enrolled")),
+                     3.0 * by_person, 3.0)]
+        scaler, model = fit(np.vstack([bank_X, X[train]]),
+                            np.r_[bank_y, y[train]], weights, recipe)
+        out[test] = score(scaler, model, X[test])
+    return out
+
+
+def compare(bank_X, bank_y, X, y, kind, vouched, real, said, taught,
+            mistakes, folds, say, only=""):
+    """Cross-validate each recipe and say which one is actually better."""
+    say(f"\n  Recipes, each cross-validated over {folds} folds.")
+    say(f"  Recall at the best threshold that fires on at most "
+        f"{AT_MOST_FALSE:.0%} of known mistakes:\n")
+    say(f"  {'':40}{'catches':>9}{'said to it':>12}{'at':>8}")
+
+    results = {}
+    for name, recipe in RECIPES.items():
+        if only and only not in name and name != "as it is now":
+            continue
+        rng = np.random.default_rng(0)   # the same folds for every recipe
+        p = cross_validate(bank_X, bank_y, X, y, kind, vouched, folds,
+                           recipe, rng)
+        caught, line, _fired = recall_at(p, real, mistakes)
+        spoken = float(np.mean(p[said] >= line)) if said.any() else 0.0
+        results[name] = (caught, spoken, line)
+        say(f"  {name:40}{caught:9.0%}{spoken:12.0%}{line:8.3f}")
+
+    best = max(results, key=lambda n: results[n][0])
+    say(f"\n  Best: {best} — {results[best][0]:.0%}, "
+        f"against {results['as it is now'][0]:.0%} as it is now.")
+    return results
 
 
 if __name__ == "__main__":
