@@ -18,11 +18,23 @@ minute timer, make it say something.
 
 Two charts, both drawn as inline SVG — no libraries, nothing fetched:
 
-- **When it woke, by hour** — a day of firings, so a noisy evening is
-  visible as a shape rather than a number.
-- **Scores, with the threshold marked** — the histogram of what the wake
-  word scored, with a dashed line where it fires. If the two humps are not
-  well separated by that line, that is the whole problem in one picture.
+- **How many times it woke, by hour** — a day of firings, so a noisy
+  evening is a shape rather than a number. One direct label, on the hour
+  that stands out.
+- **What it scored, and where it wakes** — the histogram, with the
+  threshold drawn across it and the region that wakes the speaker washed
+  in behind. How well that line separates the humps is the whole wake-word
+  problem in one picture.
+
+Both were unreadable first time round, in ways worth writing down because
+they are easy to repeat. The SVG was stretched to whatever height the
+column happened to be — `preserveAspectRatio="none"` — so every bar became
+a tower with a screenful of dead air above it. There were no axes, no
+numbers and no labels, so a tall bar could have been five or fifty. And the
+histogram was fed only firings, which by definition already crossed the
+threshold, so it reported "200 of 200 woke it": true, and useless. It gets
+the near misses too now, and the axis starts where the data does rather
+than showing an empty half that looks like missing data.
 
 ## System
 

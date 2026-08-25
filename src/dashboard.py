@@ -250,7 +250,14 @@ def _wake_summary() -> dict:
             except Exception:
                 pass
         out["by_hour"] = hours
-        out["scores"] = [r.get("score", 0) for r in today][-200:]
+        # Both sides of the line. Firings alone are every window that
+        # already crossed the threshold, so a histogram of them says "200
+        # of 200 woke it", which is true and tells you nothing. The near
+        # misses are the other hump, and the point of the picture is how
+        # well the line separates them.
+        windows = [r for r in rows if not r.get("taught")
+                   and r.get("at", "") >= stamp]
+        out["scores"] = [r.get("score", 0) for r in windows][-600:]
     except Exception:
         pass
     return out
@@ -439,7 +446,15 @@ PAGE = r"""<!doctype html><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>Claude Speaker</title>
 <style>
-:root{color-scheme:light dark;--edge:#8883;--dim:#8889;--good:#3a3;--bad:#c44}
+:root{color-scheme:light dark;--edge:#8883;--dim:#8889;--good:#3a3;--bad:#c44;
+  --series:#2a78d6;      /* one series, one colour */
+  --wash:#2a78d612;      /* the region where it fires */
+  --axis:#8884}
+@media (prefers-color-scheme:dark){
+  :root{--series:#3987e5;--wash:#3987e51f}
+}
+svg text{fill:var(--dim);font-size:9px;font-family:system-ui,sans-serif}
+svg text.value{fill:currentColor;font-weight:600}
 *{box-sizing:border-box}
 body{font:15px/1.5 system-ui,sans-serif;margin:0;padding:1.5rem 1rem 3rem}
 main{max-width:52rem;margin:0 auto}
@@ -478,7 +493,7 @@ label{display:block;font-size:.8rem;color:var(--dim);margin:.6rem 0 .2rem}
   padding:.4rem 0;border-bottom:1px solid var(--edge);cursor:pointer}
 .net:hover{background:#8881}
 .warn{border-color:var(--bad)}
-svg{display:block;width:100%;height:auto;overflow:visible}
+svg{display:block;width:100%;height:auto}
 .turn{padding:.45rem 0;border-bottom:1px solid var(--edge);font-size:.9rem}
 .turn:last-child{border:0}
 .turn i{color:var(--dim);font-style:normal;font-size:.78rem}
@@ -516,41 +531,115 @@ async function act(what,value){
   setTimeout(draw,600);
 }
 
-function bars(values, labels, colour){
-  if(!values.length) return '<div class=sub>nothing yet</div>';
-  const top=Math.max(...values,1), w=100/values.length;
-  return '<svg viewBox="0 0 100 34" preserveAspectRatio=none>'+
+// Charts are drawn in a fixed coordinate space and scaled uniformly. The
+// first version stretched a 100x34 box to whatever height the column
+// happened to be, which turned every bar into a tower with a screenful of
+// dead air above it and no numbers anywhere.
+const W=320, H=132, L=34, R=8, T=14, B=22;   // box, and room for the axes
+const plotW=W-L-R, plotH=H-T-B, base=T+plotH;
+
+function axes(ticks, maxY){
+  // A baseline, one hairline at the top of the scale, and the numbers that
+  // go with them. Recessive: hairline, solid, one step off the surface.
+  return `<line x1="${L}" y1="${base}" x2="${W-R}" y2="${base}" `+
+         `stroke="var(--axis)" stroke-width="1"/>`+
+         `<line x1="${L}" y1="${T}" x2="${W-R}" y2="${T}" `+
+         `stroke="var(--axis)" stroke-width="1" opacity=".5"/>`+
+         `<text x="${L-5}" y="${base+3}" text-anchor="end">0</text>`+
+         (maxY===null?'':
+           `<text x="${L-5}" y="${T+3}" text-anchor="end">${maxY}</text>`)+
+         ticks.map(([x,label])=>`<text x="${x}" y="${H-7}" `+
+           `text-anchor="middle">${label}</text>`).join('');
+}
+function column(x, w, h, fill){
+  // Rounded at the data end, square at the baseline.
+  const r=Math.min(3, w/2, h);
+  if(h<=0.5) return `<rect x="${x}" y="${base-0.6}" width="${w}" height="0.6" `+
+                    `fill="${fill}" opacity=".45"/>`;
+  return `<path d="M${x},${base} V${base-h+r} q0,-${r} ${r},-${r} `+
+         `h${w-2*r} q${r},0 ${r},${r} V${base} Z" fill="${fill}"/>`;
+}
+
+function hourly(values){
+  if(!values.length||!values.some(v=>v)) return '<div class=sub>nothing yet</div>';
+  const top=Math.max(...values), band=plotW/values.length;
+  const w=Math.min(24, band-2.5), biggest=values.indexOf(top);
+  return `<svg viewBox="0 0 ${W} ${H}" role=img `+
+    `aria-label="how many times it woke, by hour of the day">`+
+    // No number on the top of the scale: the direct label above the
+    // tallest bar is the same figure, and printing it twice is clutter.
+    axes([0,6,12,18,23].map(h=>[L+band*(h+0.5), String(h).padStart(2,'0')]), null)+
     values.map((v,i)=>{
-      const h=v/top*26;
-      return `<rect x="${i*w+w*0.15}" y="${28-h}" width="${w*0.7}" `+
-             `height="${h||0.4}" fill="${colour}" opacity=".85"><title>`+
-             `${labels?labels[i]:i}: ${v}</title></rect>`;
+      const x=L+band*i+(band-w)/2, h=v/top*plotH;
+      return column(x,w,h,'var(--series)')+
+        `<rect x="${L+band*i}" y="${T}" width="${band}" height="${plotH}" `+
+        `fill="transparent"><title>${String(i).padStart(2,'0')}:00 — `+
+        `${v} time${v===1?'':'s'}</title></rect>`;
     }).join('')+
-    `<line x1=0 y1=28 x2=100 y2=28 stroke="currentColor" opacity=".2"/>`+
-    '</svg>';
+    // One direct label, on the hour that stands out. Never on every bar,
+    // and never repeating a number the axis already carries.
+    (top>0?`<text class=value x="${L+band*(biggest+0.5)}" `+
+      `y="${base-plotH-4}" text-anchor="middle">${top}</text>`:'')+
+    `</svg>`;
 }
-function line(points, colour, floor, ceil){
-  if(points.length<2) return '<div class=sub>collecting…</div>';
-  const lo=floor??Math.min(...points), hi=ceil??Math.max(...points,1);
-  const at=(v)=>28-((v-lo)/((hi-lo)||1))*26;
-  const d=points.map((v,i)=>`${i*100/(points.length-1)},${at(v).toFixed(1)}`);
-  return `<svg viewBox="0 0 100 34" preserveAspectRatio=none>`+
-    `<polyline points="${d.join(' ')}" fill=none stroke="${colour}" `+
-    `stroke-width="1.2" vector-effect="non-scaling-stroke"/>`+
-    `<line x1=0 y1=28 x2=100 y2=28 stroke="currentColor" opacity=".2"/></svg>`;
-}
+
 function histogram(scores, threshold){
   if(!scores.length) return '<div class=sub>nothing yet</div>';
-  const bins=new Array(20).fill(0);
-  for(const s of scores) bins[Math.min(19,Math.floor(s*20))]++;
-  const top=Math.max(...bins,1), at=threshold*100;
-  return '<svg viewBox="0 0 100 34" preserveAspectRatio=none>'+
-    bins.map((v,i)=>{const h=v/top*26;return `<rect x="${i*5+0.6}" y="${28-h}" `+
-      `width="3.8" height="${h||0.4}" fill="#6a9" opacity=".85"><title>`+
-      `${(i/20).toFixed(2)}–${((i+1)/20).toFixed(2)}: ${v}</title></rect>`}).join('')+
-    `<line x1="${at}" y1="0" x2="${at}" y2="28" stroke="var(--bad)" `+
-    `stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>`+
-    `<line x1=0 y1=28 x2=100 y2=28 stroke="currentColor" opacity=".2"/></svg>`;
+  // Only windows that scored above WAKE_NEAR are ever written down, so the
+  // bottom of the range is empty by construction rather than by accident.
+  // Showing it as empty space reads as missing data, so the axis starts
+  // where the data does.
+  const lo=Math.max(0, Math.min(threshold, Math.min(...scores))-0.02), hi=1;
+  const span=hi-lo, bins=new Array(20).fill(0);
+  for(const s of scores) bins[Math.max(0,Math.min(19,
+    Math.floor((s-lo)/span*20)))]++;
+  const top=Math.max(...bins), band=plotW/20, w=Math.min(24, band-2.5);
+  const atX=(v)=>L+((v-lo)/span)*plotW;
+  const fires=scores.filter(s=>s>=threshold).length;
+  return `<svg viewBox="0 0 ${W} ${H}" role=img `+
+    `aria-label="what the wake word scored, and where it fires">`+
+    // The region that wakes the speaker, as a wash rather than a second
+    // colour — it is the same series, not another one.
+    `<rect x="${atX(threshold)}" y="${T}" width="${W-R-atX(threshold)}" `+
+      `height="${plotH}" fill="var(--wash)"/>`+
+    axes([lo, lo+span/2, hi].map(v=>[atX(v), v.toFixed(2)]), top)+
+    bins.map((v,i)=>{
+      const x=L+band*i+(band-w)/2, h=v/top*plotH;
+      const from=(lo+span*i/20).toFixed(2), to=(lo+span*(i+1)/20).toFixed(2);
+      return column(x,w,h,'var(--series)')+
+        `<rect x="${L+band*i}" y="${T}" width="${band}" height="${plotH}" `+
+        `fill="transparent"><title>${from}–${to}: ${v}</title></rect>`;
+    }).join('')+
+    `<line x1="${atX(threshold)}" y1="${T}" x2="${atX(threshold)}" `+
+      `y2="${base}" stroke="var(--bad)" stroke-width="1"/>`+
+    // One annotation, above the plot, where nothing can collide with it.
+    `<text class=value x="${L}" y="${T-5}">${fires} of ${scores.length} `+
+      `woke it — the line is ${threshold}</text>`+
+    `</svg>`;
+}
+
+function overTime(points, unit, floor, ceil){
+  if(points.length<2) return '<div class=sub>collecting…</div>';
+  const lo=floor??Math.min(...points), hi=ceil??Math.max(...points,1);
+  const h=104, top=10, plot=h-top-20, baseY=top+plot;
+  const at=(v)=>baseY-((v-lo)/((hi-lo)||1))*plot;
+  const x=(i)=>L+i*(plotW/(points.length-1));
+  const now=points[points.length-1];
+  return `<svg viewBox="0 0 ${W} ${h}" role=img aria-label="the last half hour">`+
+    `<line x1="${L}" y1="${baseY}" x2="${W-R}" y2="${baseY}" `+
+      `stroke="var(--axis)" stroke-width="1"/>`+
+    `<text x="${L-5}" y="${baseY+3}" text-anchor="end">${lo}</text>`+
+    `<text x="${L-5}" y="${top+3}" text-anchor="end">${hi}</text>`+
+    `<text x="${L}" y="${h-6}">30 min ago</text>`+
+    `<text x="${W-R}" y="${h-6}" text-anchor="end">now</text>`+
+    `<polyline points="${points.map((v,i)=>x(i)+','+at(v).toFixed(1)).join(' ')}" `+
+      `fill=none stroke="var(--series)" stroke-width="2" `+
+      `stroke-linejoin=round stroke-linecap=round/>`+
+    `<circle cx="${x(points.length-1)}" cy="${at(now)}" r="4" `+
+      `fill="var(--series)"/>`+
+    `<text class=value x="${W-R}" y="${at(now)-8}" text-anchor="end">`+
+      `${now}${unit}</text>`+
+    `</svg>`;
 }
 
 async function draw(){
@@ -589,10 +678,12 @@ async function drawSpeaker(){
       <div class=tile><b>${w.threshold??'—'}</b><span>threshold</span></div>
       <div class=tile><b>${w.labelled??'—'}</b><span>labelled by hand</span></div>
      </div>
-     <div style="margin-top:1rem"><div class=sub>when it woke, by hour</div>
-     ${bars(w.by_hour||[], (w.by_hour||[]).map((_,i)=>i+':00'), '#6a9')}</div>
-     <div style="margin-top:1rem"><div class=sub>scores, with the threshold marked</div>
-     ${histogram(w.scores||[], w.threshold||0.5)}</div>
+     <div style="margin-top:1.1rem"><div class=sub>how many times it woke,
+       by hour of the day</div>${hourly(w.by_hour||[])}</div>
+     <div style="margin-top:1.1rem"><div class=sub>what it scored, and where
+       it wakes</div>${histogram(w.scores||[], w.threshold||0.5)}
+       <div class=sub>Only windows scoring above 0.50 are written down, so
+        this is the top of the distribution and not all of it.</div></div>
      <div class=row style="margin-top:.75rem"><span>model</span>
        <span>${esc(w.model||'')} ${w.fitted?'· fitted '+esc(w.fitted):''}
        ${w.dataset?'· '+esc(w.dataset):''}</span></div></div>`+
@@ -619,11 +710,12 @@ async function drawSystem(){
      <div class=tile><b>${pct(d.disk.used_percent)}</b><span>disk, ${gb(d.disk.free)} free</span></div>
     </div></div>`+
    `<div class=card><h2>Last half hour</h2>
-     <div class=sub>processor</div>${line((d.history||[]).map(h=>h.cpu),'#6a9',0,100)}
-     <div class=sub style="margin-top:.8rem">temperature</div>
-     ${line((d.history||[]).map(h=>h.temp),'#c86',30,85)}
-     <div class=sub style="margin-top:.8rem">memory</div>
-     ${line((d.history||[]).map(h=>h.memory),'#a8c',0,100)}</div>`+
+     <div class=sub>processor, percent</div>
+     ${overTime((d.history||[]).map(h=>h.cpu),'%',0,100)}
+     <div class=sub style="margin-top:1rem">temperature, °C</div>
+     ${overTime((d.history||[]).map(h=>h.temp),'°',30,85)}
+     <div class=sub style="margin-top:1rem">memory, percent</div>
+     ${overTime((d.history||[]).map(h=>h.memory),'%',0,100)}</div>`+
    (bad.length?`<div class="card warn"><h2>The power supply</h2>`+
      bad.map(([k])=>`<div class=row><span>${esc(k)}</span><b>yes</b></div>`).join('')+
      `<div class=sub style="margin-top:.6rem">Under-voltage makes a Pi slow
