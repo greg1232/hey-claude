@@ -479,3 +479,48 @@ First archive:
 ```
 848 firings, 1304 near misses, 1826 labelled, 143 by a person, 400 with audio
 ```
+
+## Does any of it work?
+
+```
+./evaluate.sh
+```
+
+`relearn.py` decides whether to promote a model; it does not say how good
+one is, and it cannot — it compares a candidate against whatever is
+installed, and the installed one was fitted on everything available at the
+time. Asking it about its own training data is how you get 100% recall and
+0% false wakes, which is memory rather than skill.
+
+`evaluate.py` answers the other question, twice, with no leakage. The
+baseline is the shipped model, fitted only on the recorded corpus, scored
+on everything from this room — it has genuinely never seen any of it. The
+comparison is five-fold cross-validation over the log: five models, five
+disjoint test sets, no row ever scored by a model that trained on it.
+
+Measured on 96 real firings a person can vouch for and 284 confirmed
+mistakes:
+
+```
+                    before learning        after learning
+  line   catches  false        catches  false
+  0.700      83%  48.6%            85%  12.0%
+  0.800      79%  41.2%            84%   9.5%
+  0.900      73%  32.0%            79%   7.0%
+  0.950      66%  27.5%            76%   6.0%
+```
+
+**Four times fewer false wakes, and slightly better recall.** That is the
+whole loop — logging what fires, labelling it, refitting on it — measured
+for the first time on data none of the models involved had seen.
+
+The split by where a positive came from is the other half of the story:
+
+```
+after learning, at 0.800:  77% of the ones said to it, 89% of the ones taught
+after learning, at 0.975:  54% of the ones said to it, 81% of the ones taught
+```
+
+Enrolment recordings are deliberate, clear and close. Somebody calling
+across a room is not, and the gap between those columns is the honest
+measure of how far there is to go.

@@ -77,6 +77,7 @@ Five commands, all from this folder on the laptop:
 ./wishes.sh              # what it was asked for and couldn't do
 ./label.sh               # listen to what woke it, and say if it was right
 ./relearn.sh             # teach it from today — it also runs itself at 4am
+./evaluate.sh            # how good is the wake word, really
 ```
 
 `./label.sh` is the one worth a few minutes a week. It plays back the clips
@@ -137,6 +138,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/train_whisper_wake.py` | Trains the wake word |
 | `train/label_wakes.py` | Decides which logged firings were real |
 | `train/relearn.py` | Retrains on them, in about a second |
+| `train/evaluate.py` | Measures it on firings it has never seen |
 | `train/archive.py` | Commits the data, and stamps the model with it |
 | `train/test_wake.py` | Checks it hears you |
 | `train/test_silence.py` | Checks it doesn't fire in a quiet room |
