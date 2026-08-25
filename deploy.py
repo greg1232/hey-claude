@@ -17,6 +17,7 @@ on both machines.
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -428,6 +429,39 @@ def install_nightly(pi: Pi) -> None:
     indent(when or "enabled")
 
 
+# Changing the Wi-Fi means asking NetworkManager to change a system
+# connection, which polkit guards behind a password — and a password prompt
+# is not something a web page in a kitchen can answer. This hands that one
+# family of actions to the netdev group, which the Pi's own user is already
+# in: the same bargain as the LED rule, give the thing to a group rather
+# than becoming root.
+POLKIT_RULE = """// Installed by deploy.sh — see src/dashboard.py
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});
+"""
+POLKIT_PATH = "/etc/polkit-1/rules.d/50-claude-speaker-wifi.rules"
+
+
+def allow_wifi_changes(pi: Pi, ask: bool = True) -> None:
+    """Let the dashboard change the network without a password."""
+    if pi.output(f"cat {POLKIT_PATH} 2>/dev/null").strip() == \
+            POLKIT_RULE.strip():
+        indent("already allowed")
+        return
+    if not ask:
+        indent("not set up — the dashboard can show the Wi-Fi, not change it")
+        indent("this needs the Pi's password once:  ./deploy.sh --wifi")
+        return
+
+    indent("adding a polkit rule so the dashboard can change the network")
+    pi.run(f"printf '%s' {shlex.quote(POLKIT_RULE)} | sudo tee {POLKIT_PATH} "
+           ">/dev/null && sudo systemctl restart polkit", tty=True)
+
+
 def copy_code(pi: Pi) -> None:
     pi.run(f"mkdir -p ~/{REMOTE_DIR}", quiet=True)
     # Plain flags only: macOS still ships rsync 2.6.9, which doesn't know
@@ -582,6 +616,10 @@ def main() -> int:
                         help="start it afterwards and watch")
     parser.add_argument("--service", action="store_true",
                         help="start it on every boot")
+    parser.add_argument("--wifi", action="store_true",
+                        help="only add the polkit rule that lets the "
+                             "dashboard change the network (asks for the "
+                             "Pi's password, once)")
     parser.add_argument("--leds", action="store_true",
                         help="only add the udev rule that lets the speaker "
                              "drive the array's LED ring (asks for the Pi's "
@@ -603,6 +641,11 @@ def main() -> int:
         'echo "$(. /etc/os-release; echo "$PRETTY_NAME") on $(uname -m), '
         'Python $(python3 -V | cut -d" " -f2)"'))
 
+    if args.wifi:
+        step("Letting the dashboard change the Wi-Fi")
+        allow_wifi_changes(pi)
+        return 0
+
     if args.leds:
         step("Letting the speaker drive the array's LED ring")
         allow_led_access(pi)
@@ -614,6 +657,8 @@ def main() -> int:
         step("Skipping system packages (--no-apt)")
         step("Checking the speaker can drive the array's LED ring")
         allow_led_access(pi, ask=False)
+        step("Checking the dashboard can change the Wi-Fi")
+        allow_wifi_changes(pi, ask=False)
     else:
         step("Installing system packages (sudo may ask for the Pi's password)")
         install_packages(pi)
@@ -623,6 +668,9 @@ def main() -> int:
 
         step("Installing Spotify Connect")
         install_spotify(pi)
+
+        step("Letting the dashboard change the Wi-Fi")
+        allow_wifi_changes(pi)
 
     step("Copying the code")
     copy_code(pi)

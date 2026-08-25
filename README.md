@@ -78,6 +78,7 @@ Five commands, all from this folder on the laptop:
 ./label.sh               # listen to what woke it, and say if it was right
 ./relearn.sh             # teach it from today — it also runs itself at 4am
 ./evaluate.sh            # how good is the wake word, really
+                         # and http://<the pi>:8080 for the dashboard
 ./evaluate.sh --compare  # which training recipe is actually better
 ```
 
@@ -120,6 +121,7 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/brain.py` | Asks Claude, and runs the tools it asks for |
 | `src/tts.py` | Says the answer out loud (macOS `say`, or Piper) |
 | `src/lights.py` | The LED ring on the array |
+| `src/dashboard.py` | A page served from the Pi — state, metrics, Wi-Fi |
 | `src/config.py` | Every setting, in one place |
 | **Tools** | |
 | `src/tools.py` | The framework: collect, describe, run |
@@ -188,6 +190,7 @@ what each one does and how to set the ones up that need keys.
 | **[docs/tools.md](docs/tools.md)** | How tools work, and how to add one |
 | **[docs/wake-word.md](docs/wake-word.md)** | Why the obvious library didn't work, and what does |
 | **[docs/raspberry-pi.md](docs/raspberry-pi.md)** | Deploying, the services, the microphone array, the voice |
+| **[docs/dashboard.md](docs/dashboard.md)** | The page served from the Pi |
 | **[docs/troubleshooting.md](docs/troubleshooting.md)** | When something goes wrong |
 | **[docs/design.md](docs/design.md)** | The original plan, kept as written |
 

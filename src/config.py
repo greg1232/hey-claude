@@ -206,6 +206,17 @@ FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 HF_TOKEN = _get("HF_TOKEN", "")
 
 
+# --- The dashboard ---
+# A page served from the Pi, for a browser on the same network: what the
+# speaker is doing, how the machine is, and which Wi-Fi it is on.
+#
+# It has no password. Anybody who can reach the Pi can see what was asked
+# and change the network, so this belongs on a home network and nowhere
+# else. Set DASHBOARD=off to turn it off.
+DASHBOARD = _get("DASHBOARD", "on").lower() not in ("off", "0", "false", "no")
+DASHBOARD_PORT = _get("DASHBOARD_PORT", "8080")
+
+
 # --- Spotify ---
 # Playing music needs a Spotify Premium account: librespot, which does the
 # streaming on the Pi, cannot play at all on a free one.

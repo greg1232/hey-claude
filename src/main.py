@@ -17,6 +17,7 @@ import sys
 import audio_in
 import brain
 import config
+import dashboard
 import enroll
 import lights
 import sounds
@@ -35,6 +36,7 @@ def run_voice_mode() -> None:
     weather.start()  # Fetches in the background; never blocks a question.
     timers.start(tts.speak, tts.ring_once)  # Rings on its own thread.
     sounds.start()  # Watches the clock on anything left playing.
+    dashboard.start()  # A page to look at, from a browser on this network.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()
@@ -126,6 +128,8 @@ def one_turn(mic, waker, the_brain) -> None:
                 # rather than announcing the mistake to an empty room.
                 print("(woke up, but nobody was talking)")
                 wake_log.outcome(firing, "", False)
+                dashboard.note("woke, nobody spoke",
+                               score=getattr(waker, "last_score", 0))
                 return
             print(f"You: {question}")
 
@@ -145,8 +149,12 @@ def one_turn(mic, waker, the_brain) -> None:
                     # brain.SILENCE.
                     print(f"(not for me: {question!r})")
                     wake_log.outcome(firing, question, False)
+                    dashboard.note("not for me", said=question,
+                                   score=getattr(waker, "last_score", 0))
                 return
             wake_log.outcome(firing, question, True)
+            dashboard.note("answered", said=question, answer=answer,
+                           score=getattr(waker, "last_score", 0))
             print(f"Claude: {answer}\n")
             lights.show("speaking")
             tts.speak(answer)
