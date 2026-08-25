@@ -101,6 +101,43 @@ RECIPES = {
 AT_MOST_FALSE = 0.10
 
 
+AT_LEAST_CAUGHT = 0.80
+
+
+def false_at(p, real, mistakes, wanted=AT_LEAST_CAUGHT):
+    """False-wake rate at the strictest threshold still catching `wanted`.
+
+    The other half of the same question. Comparing recall at a fixed false
+    rate says one model wins there; comparing false rates at a fixed
+    recall says whether it wins at the other end too. A model can do both
+    or only one.
+    """
+    best = (1.0, 0.0)
+    for line in np.arange(0.05, 0.999, 0.005):
+        caught = float(np.mean(p[real] >= line))
+        if caught < wanted:
+            continue
+        fired = float(np.mean(p[mistakes] >= line))
+        if fired < best[0]:
+            best = (fired, line)
+    return best
+
+
+def separation(p, real, mistakes):
+    """How often a real firing outscores a mistake, over every pair.
+
+    One number for the whole curve, so "better at this threshold" cannot
+    hide a model that is worse everywhere else.
+    """
+    good, bad = p[real], p[mistakes]
+    if not len(good) or not len(bad):
+        return float("nan")
+    order = np.argsort(np.concatenate([good, bad]))
+    ranks = np.empty(len(order)); ranks[order] = np.arange(len(order)) + 1
+    return float((ranks[:len(good)].sum() - len(good) * (len(good) + 1) / 2)
+                 / (len(good) * len(bad)))
+
+
 def recall_at(p, real, mistakes, budget=AT_MOST_FALSE):
     """Recall at the best threshold that keeps false wakes under budget."""
     best = (0.0, 0.0, 1.0)
@@ -244,7 +281,8 @@ def compare(bank_X, bank_y, X, y, kind, vouched, real, said, taught,
     say(f"\n  Recipes, each cross-validated over {folds} folds.")
     say(f"  Recall at the best threshold that fires on at most "
         f"{AT_MOST_FALSE:.0%} of known mistakes:\n")
-    say(f"  {'':40}{'catches':>9}{'said to it':>12}{'at':>8}")
+    say(f"  {'':40}{'catches':>9}{'said':>7}"
+        f"{'false @80%':>12}{'separation':>12}")
 
     results = {}
     for name, recipe in RECIPES.items():
@@ -255,12 +293,23 @@ def compare(bank_X, bank_y, X, y, kind, vouched, real, said, taught,
                            recipe, rng)
         caught, line, _fired = recall_at(p, real, mistakes)
         spoken = float(np.mean(p[said] >= line)) if said.any() else 0.0
-        results[name] = (caught, spoken, line)
-        say(f"  {name:40}{caught:9.0%}{spoken:12.0%}{line:8.3f}")
+        fired, _ = false_at(p, real, mistakes)
+        apart = separation(p, real, mistakes)
+        results[name] = (caught, spoken, fired, apart)
+        say(f"  {name:40}{caught:9.0%}{spoken:7.0%}{fired:12.1%}"
+            f"{apart:12.3f}")
 
     best = max(results, key=lambda n: results[n][0])
-    say(f"\n  Best: {best} — {results[best][0]:.0%}, "
-        f"against {results['as it is now'][0]:.0%} as it is now.")
+    now = results["as it is now"]
+    say(f"\n  catches      recall at no more than {AT_MOST_FALSE:.0%} false")
+    say(f"  said         the same, counting only firings said to the speaker")
+    say(f"  false @80%   false wakes at the strictest threshold still "
+        f"catching {AT_LEAST_CAUGHT:.0%}")
+    say(f"  separation   how often a real firing outscores a mistake, over "
+        "every pair")
+    say(f"\n  Best: {best} — catches {results[best][0]:.0%} against "
+        f"{now[0]:.0%}, fires on {results[best][2]:.1%} against {now[2]:.1%}, "
+        f"separation {results[best][3]:.3f} against {now[3]:.3f}.")
     return results
 
 

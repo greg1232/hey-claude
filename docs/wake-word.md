@@ -524,3 +524,44 @@ after learning, at 0.975:  54% of the ones said to it, 81% of the ones taught
 Enrolment recordings are deliberate, clear and close. Somebody calling
 across a room is not, and the gap between those columns is the honest
 measure of how far there is to go.
+
+### Which recipe, measured rather than guessed
+
+```
+./evaluate.sh --compare
+```
+
+Cross-validating the *recipe* rather than a model is what the evaluation
+harness is really for: it makes training choices testable. Each variant is
+fitted five times over the same folds and judged three ways, because a win
+at one operating point can hide a loss everywhere else.
+
+```
+                                        catches   said  false @80%  separation
+  as it is now (C=0.1)                      85%    79%        7.0%       0.943
+  without the machine's guesses             91%    82%        2.8%       0.975
+  without the augmented enrolment copies    78%    69%       10.9%       0.926
+  human labels weighted 1x not 5x           84%    77%        8.1%       0.940
+  human labels weighted 20x                 84%    77%        8.5%       0.943
+  less regularised (C=1)                    75%    62%       13.4%       0.918
+  more regularised (C=0.01)                 95%    90%        3.9%       0.974
+  a small neural net instead                94%    90%        4.2%       0.974
+  more regularised still (C=0.003)          97%    92%        1.4%       0.987
+  much more regularised (C=0.001)           99%    97%        0.4%       0.993
+```
+
+`separation` is how often a real firing outscores a mistake over every
+pair — one number for the whole curve, immune to the thresholds moving.
+Heavy regularisation improves it from 0.943 to 0.993, so this is a better
+ranking and not the same curve relabelled.
+
+**Seventeen times fewer false wakes at the same recall**, and higher recall
+too. Seven hundred and sixty eight features against a few thousand rows is
+a great deal of room to overfit, and the fit was taking all of it — while
+the settings that had been guessed at, how much a human label is worth and
+whether to keep the machine's guesses, moved almost nothing next to it.
+
+Two honest limits. Thirty nine spontaneous positives is a small test set.
+And these false rates are over clips that already fired at some point, not
+over hours of a room, so they compare models fairly and do not predict a
+rate per evening.

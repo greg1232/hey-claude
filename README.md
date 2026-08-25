@@ -78,6 +78,7 @@ Five commands, all from this folder on the laptop:
 ./label.sh               # listen to what woke it, and say if it was right
 ./relearn.sh             # teach it from today — it also runs itself at 4am
 ./evaluate.sh            # how good is the wake word, really
+./evaluate.sh --compare  # which training recipe is actually better
 ```
 
 `./label.sh` is the one worth a few minutes a week. It plays back the clips
