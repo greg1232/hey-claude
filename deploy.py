@@ -173,6 +173,20 @@ def indent(text: str) -> None:
         print(f"    {line}")
 
 
+def can_ask_for_a_password() -> bool:
+    """Whether sudo has anywhere to ask.
+
+    A deploy run from a terminal can hand the Pi's password prompt to the
+    person sitting in front of it. A deploy run from a script has no
+    terminal at all, and `ssh -t` then fails outright rather than
+    prompting — so the handful of steps that need root once stand aside
+    and say what's missing, instead of taking the whole deploy down with
+    them. Before this, a deploy with no terminal died on the polkit rule
+    and never got as far as copying the code.
+    """
+    return sys.stdin.isatty()
+
+
 class Pi:
     """The Raspberry Pi at the other end of an SSH connection."""
 
@@ -271,6 +285,11 @@ def install_packages(pi: Pi) -> None:
         indent("already installed")
         return
     indent(f"installing: {missing}")
+    if not can_ask_for_a_password():
+        raise SystemExit(
+            "    ...but there's no terminal here to type the Pi's password\n"
+            "    into. Run ./deploy.sh yourself, or ./deploy.sh --no-apt to\n"
+            "    deploy without these.")
     pi.run(f"sudo apt-get update -qq && sudo apt-get install -y -qq {missing}",
            tty=True)
 
@@ -299,7 +318,7 @@ def allow_led_access(pi: Pi, ask: bool = True) -> None:
         indent("already allowed")
         return
 
-    if not ask:
+    if not ask or not can_ask_for_a_password():
         indent("not set up yet — the LED ring will stay dark")
         indent("this needs the Pi's password once:  ./deploy.sh --leds")
         return
@@ -345,6 +364,10 @@ def install_spotify(pi: Pi) -> None:
     """
     if pi.output("which librespot").strip():
         indent("librespot already installed")
+    elif not can_ask_for_a_password():
+        indent("not installed — needs the Pi's password once")
+        indent("run ./deploy.sh from a terminal and it will do it")
+        return
     else:
         indent("downloading and installing librespot")
         pi.run(f"curl -fsSL -o /tmp/raspotify.deb {RASPOTIFY} && "
@@ -452,7 +475,7 @@ def allow_wifi_changes(pi: Pi, ask: bool = True) -> None:
             POLKIT_RULE.strip():
         indent("already allowed")
         return
-    if not ask:
+    if not ask or not can_ask_for_a_password():
         indent("not set up — the dashboard can show the Wi-Fi, not change it")
         indent("this needs the Pi's password once:  ./deploy.sh --wifi")
         return
