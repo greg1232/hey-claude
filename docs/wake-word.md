@@ -338,9 +338,10 @@ room went on waking the speaker every twenty seconds. A model can memorise
 thirty-four clips of one evening's television and learn nothing whatever
 about television.
 
-So a fifth of the labelled firings are held back, the model is fitted
-without them, and both models are asked about those. The first honest
-measurement on this speaker:
+So the clips a person listened to are held out, and every one of them is
+scored by a model that was fitted without it — in five folds, so no row is
+ever both trained on and tested on. The first honest measurement on this
+speaker:
 
 ```
 on 67 firings held back from the fitting:
@@ -351,6 +352,62 @@ on 67 firings held back from the fitting:
 The retrained model would have been much worse, and the gate refused it.
 That is the number to watch, and the reason `./label.sh` exists: the
 automatic labels are good at the easy half and guess at the hard half.
+
+### Both sides, the same question
+
+There is a second way to rig this, and it took longer to find. The
+challenger is scored on rows held out of its fitting. The incumbent is the
+model already running — and it was fitted on everything labelled at the
+time, which is nearly all of those same rows. So one side sat an exam and
+the other marked its own homework.
+
+It does not look like a bug. It looks like the running model being very
+good:
+
+```
+                          appears        actually
+  catches                     96%             86%
+  fires on                     1%            4.1%
+```
+
+Both columns are the same weights on the same clips. The left is memory.
+Nothing ever beat it, so nothing was ever promoted, and a learning loop
+that cannot promote is a pipeline.
+
+When the incumbent has seen the test set, it is therefore **rebuilt rather
+than loaded**: the same recipe, the same folds, fitted only on the log as
+it stood when the running model was fitted. That asks the question the gate
+is actually for — *is the new data worth having* — and asks it of both
+sides identically.
+
+Holding out all the human labels at once is not good enough either. The
+model being judged would then be one that has never seen a human label,
+which is not the model that ships and does not sit on the same scale, so
+the threshold swept from it would not fit the weights it gets saved beside
+— 74% caught for the deprived version against 86% for the real one. Folds
+give each model four fifths of them, which is near enough.
+
+### How much television a child is worth
+
+`WAKE_FALSE_BUDGET` is the one number in the retraining that is a judgement
+rather than a measurement: the fraction of known mistakes the chosen
+threshold is allowed to still fire on. The sweep buys as much recall as
+that allows and prints the whole curve beside its choice.
+
+It was 0.15, on the argument that a false wake is nearly silent — nothing
+said, nothing answered, a flash of the ring. That argument was made without
+measuring how often it happens: **sixteen firings an hour with the
+television on, fourteen of them with nobody talking.** A budget is a rate
+times an exposure, and the exposure was large. Measured leak-free on 443
+hand labels:
+
+| budget | line | catches | fires on |
+|--------|------|---------|----------|
+| 15% | 0.400 | 97% | 14.8% |
+| **5%** | **0.630** | **91%** | **4.4%** |
+| 2% | 0.780 | 80% | 1.8% |
+
+It is 0.05 now: nine tenths of the recall for a third of the mistakes.
 
 ## Where the data lives
 

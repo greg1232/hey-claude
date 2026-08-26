@@ -58,6 +58,10 @@ MODEL = HERE.parent / "models" / "hey_claude_whisper.npz"
 # Below this many labelled firings there is nothing to hold back, so the
 # new model is taken on trust — it can only be the bank plus a handful.
 LEAST_TO_JUDGE = 25
+
+# How many ways the test set is split, so that every row in it is
+# scored by a model that was fitted without it.
+FOLDS = 5
 # And how many of those have to be the wake word before a recall figure
 # means anything. With one, recall is 0% or 100% and nothing between.
 ENOUGH_POSITIVES = 8
@@ -96,12 +100,19 @@ THRESHOLDS = [round(x, 3) for x in np.arange(0.30, 0.999, 0.005)]
 # much of a child being heard — so it is a setting, and the sweep prints
 # the whole curve beside its choice so the judgement can be checked.
 #
-# Fifteen per cent, because a false wake is nearly silent now: nothing is
-# said, nothing is answered, and it costs a flash of the ring and some
-# processor. On this speaker's own labelled firings that buys 73% of real
-# wake words instead of 47%, which is the difference between being heard
-# and saying it twice.
-FALSE_BUDGET = float(_setting("WAKE_FALSE_BUDGET", "0.15"))
+# Five per cent. It was fifteen, on the argument that a false wake is
+# nearly silent — nothing is said, nothing is answered, it costs a flash
+# of the ring. That argument was made without measuring how often it
+# happens. Sixteen firings an hour in this room with the television on,
+# fourteen of them with nobody talking: a budget is a rate times an
+# exposure, and the exposure turned out to be large.
+#
+# Measured leak-free on 443 hand labels, what each budget buys:
+#     15%   line 0.400, catches 97%, fires on 14.8%
+#      5%   line 0.630, catches 91%, fires on  4.4%
+#      2%   line 0.780, catches 80%, fires on  1.8%
+# Five keeps nine tenths of the recall for a third of the mistakes.
+FALSE_BUDGET = float(_setting("WAKE_FALSE_BUDGET", "0.05"))
 
 # What the sweep settled on for the model just fitted, so it can be saved
 # with it.
@@ -212,6 +223,58 @@ def _kind(firing: dict) -> str:
     return "machine"
 
 
+def _fit_on(bank_X, bank_y, log_X, log_y, log_kind, weight, rows):
+    """The same recipe as refit(), on a chosen slice of the log.
+
+    Both sides of the comparison in _worth_having go through here, which
+    is the whole point of it: two models are only comparable if they were
+    made the same way and asked the same question.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    X = np.vstack([bank_X, log_X[rows]])
+    y = np.r_[bank_y, log_y[rows]]
+    w = np.r_[np.ones(len(bank_X)),
+              np.where(np.isin(log_kind[rows], ("person", "enrolled")),
+                       weight * BY_PERSON, weight)]
+    scaler = StandardScaler().fit(X)
+    clf = LogisticRegression(max_iter=5000, C=FIT_HELD_BACK,
+                             class_weight="balanced")
+    clf.fit(scaler.transform(X), y, sample_weight=w)
+    return (scaler.mean_, scaler.scale_, clf.coef_[0],
+            float(clf.intercept_[0]))
+
+
+def _out_of_fold(bank_X, bank_y, log_X, log_y, log_kind, weight, held,
+                 only=None, folds=FOLDS):
+    """Score each held row with a model fitted without it.
+
+    `only` narrows what may be trained on — how the running model is
+    rebuilt from the data it actually had. Returns one probability per
+    held row, in order, or None if some fold had nothing to learn from.
+    """
+    rows = np.where(held)[0]
+    if len(rows) < folds:
+        return None
+    order = np.random.default_rng(0).permutation(len(rows))
+    scored = np.zeros(len(log_X))
+    for fold in range(folds):
+        learn_from = np.ones(len(log_X), bool)
+        learn_from[rows[order[fold::folds]]] = False
+        if only is not None:
+            learn_from &= only
+        if int(learn_from.sum()) < LEAST_TO_JUDGE or \
+                len(set(log_y[learn_from])) < 2:
+            return None
+        tested = rows[order[fold::folds]]
+        scored[tested] = _probability(
+            log_X[tested],
+            *_fit_on(bank_X, bank_y, log_X, log_y, log_kind, weight,
+                     learn_from))
+    return scored[held]
+
+
 def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
                   old, say):
     """Would the new model be better, on firings it has not been shown?
@@ -226,9 +289,6 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     without them, and both models are asked about them. That is the only
     number here that can say no.
     """
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-
     if len(log_X) < LEAST_TO_JUDGE:
         say(f"  only {len(log_X)} labelled — too few to judge, so taking it")
         return True, float("nan")
@@ -279,14 +339,16 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     # anything logged since is fair to both.
     since = str(old["fitted_at"]) if "fitted_at" in old.files else ""
     fresh = human & (log_when > since) if since else human
+    seen_by_old = bool(since)
     if int(fresh.sum()) >= LEAST_TO_JUDGE and len(set(log_y[fresh])) > 1:
         human = fresh
+        seen_by_old = False
         say(f"  judging on the {int(human.sum())} logged since the running "
             f"model was fitted, which neither has seen")
     elif since:
         say(f"  only {int(fresh.sum())} logged since the running model was "
             "fitted, so judging on everything a person can vouch for — "
-            "which flatters the one already trained on it")
+            "which the running model was fitted on")
 
     classes = set(log_y[human]) if human.any() else set()
     held = human.copy()
@@ -320,22 +382,56 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     if not held.any() or held.all() or len(set(log_y[~held])) < 2:
         return True, float("nan")
 
-    X = np.vstack([bank_X, log_X[~held]])
-    y = np.r_[bank_y, log_y[~held]]
-    w = np.r_[np.ones(len(bank_X)),
-              np.where(np.isin(log_kind[~held], ("person", "enrolled")),
-                       weight * BY_PERSON, weight)]
-    scaler = StandardScaler().fit(X)
-    clf = LogisticRegression(max_iter=5000, C=FIT_HELD_BACK, class_weight="balanced")
-    clf.fit(scaler.transform(X), y, sample_weight=w)
+    # Every held row scored by a model that was not fitted on it, in
+    # folds, rather than by one model with the whole test set held out.
+    #
+    # The difference matters because the human labels are both the best
+    # training data and the only trustworthy test. Hold all of them out
+    # at once and the model being judged is one that has never seen a
+    # human label — not the model that ships, and sitting on a different
+    # scale, so the threshold chosen from it does not fit the one it gets
+    # saved beside. In folds, each model has four fifths of them, which
+    # is near enough the real thing: 86% caught here against 74% for the
+    # deprived version.
+    after = _out_of_fold(bank_X, bank_y, log_X, log_y, log_kind, weight,
+                         held)
+
+    # And what to compare it against.
+    #
+    # The weights that are running are the honest answer only when the
+    # rows being judged are ones they have never seen. Most nights they
+    # are not: a model is fitted on everything labelled so far and then
+    # judged before much else has been logged, so scoring those weights
+    # on the test set is a memory test, and memory wins. It reported 96%
+    # caught and 1% fired on this speaker's hand labels where the same
+    # recipe, honestly scored, says 86% and 4% — and no challenger ever
+    # got past it, which is a learning loop that cannot learn.
+    #
+    # So when the incumbent has seen the test, it is rebuilt rather than
+    # loaded: the same recipe, the same folds, but fitted only on the log
+    # as it stood when the running model was fitted. That asks the
+    # question this gate is actually for — is the new data worth having —
+    # and asks it of both sides identically.
+    before = None
+    if seen_by_old:
+        earlier = log_when <= since
+        if int((earlier & ~held).sum()) >= LEAST_TO_JUDGE:
+            before = _out_of_fold(bank_X, bank_y, log_X, log_y, log_kind,
+                                  weight, held, only=earlier)
+        if before is None:
+            say("  and too little of its data is left to rebuild it "
+                "from, so this\n  comparison still flatters it — --force "
+                "to override")
+        else:
+            say(f"  so 'before' is rebuilt from the "
+                f"{int((earlier & ~held).sum())} it had, and both are "
+                "scored only on\n  rows they were not fitted on")
+    if before is None:
+        before = _probability(log_X[held], old["mean"], old["scale"],
+                              old["coef"], float(old["intercept"]))
 
     real = log_y[held] == 1
-    scores = {
-        "before": _probability(log_X[held], old["mean"], old["scale"],
-                               old["coef"], float(old["intercept"])),
-        "after": _probability(log_X[held], scaler.mean_, scaler.scale_,
-                              clf.coef_[0], float(clf.intercept_[0])),
-    }
+    scores = {"before": before, "after": after}
     # Each model at its own best threshold, not both at the same one.
     #
     # The threshold is a setting, not a property of the model, so holding
