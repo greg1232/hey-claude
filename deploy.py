@@ -485,6 +485,52 @@ def allow_wifi_changes(pi: Pi, ask: bool = True) -> None:
            ">/dev/null && sudo systemctl restart polkit", tty=True)
 
 
+def here_timezone() -> str | None:
+    """The zone this computer is in, as an IANA name.
+
+    /etc/localtime is a symlink into the zoneinfo tree on both macOS and
+    Linux, and the part after "zoneinfo" is the name we want:
+    "America/Los_Angeles" rather than "PDT". The Pi needs the name, not the
+    abbreviation, so that it knows about next spring on its own.
+    """
+    try:
+        parts = Path("/etc/localtime").resolve().parts
+    except OSError:
+        return None
+    if "zoneinfo" in parts:
+        return "/".join(parts[parts.index("zoneinfo") + 1:])
+    return None
+
+
+def match_the_timezone(pi: Pi, ask: bool = True) -> None:
+    """Put the Pi in the same time zone as the computer deploying to it.
+
+    A Pi keeps whatever zone it was imaged with, and nothing in the room
+    ever tells it otherwise. Ours sat in America/New_York, so it answered
+    "what time is it" three hours ahead, and a timer set for eight o'clock
+    was set for the wrong eight o'clock. The clock was right the whole
+    time — only the name it went by was wrong, which is the harder kind of
+    wrong to notice.
+    """
+    here = here_timezone()
+    if here is None:
+        indent("can't tell what zone this computer is in — leaving the Pi's "
+               "alone")
+        return
+    there = pi.output("timedatectl show -p Timezone --value")
+    if there == here:
+        indent(f"already {here}")
+        return
+    if not ask or not can_ask_for_a_password():
+        indent(f"the Pi says {there or 'an unknown zone'}, this computer says "
+               f"{here},")
+        indent("so it will tell the time wrong — one run of ./deploy.sh from "
+               "a terminal fixes it")
+        return
+    indent(f"moving the Pi from {there or 'an unknown zone'} to {here}")
+    pi.run(f"sudo timedatectl set-timezone {shlex.quote(here)}", tty=True)
+
+
 def copy_code(pi: Pi) -> None:
     pi.run(f"mkdir -p ~/{REMOTE_DIR}", quiet=True)
     # Plain flags only: macOS still ships rsync 2.6.9, which doesn't know
@@ -682,6 +728,8 @@ def main() -> int:
         allow_led_access(pi, ask=False)
         step("Checking the dashboard can change the Wi-Fi")
         allow_wifi_changes(pi, ask=False)
+        step("Checking the Pi's clock is in this time zone")
+        match_the_timezone(pi, ask=False)
     else:
         step("Installing system packages (sudo may ask for the Pi's password)")
         install_packages(pi)
@@ -694,6 +742,9 @@ def main() -> int:
 
         step("Letting the dashboard change the Wi-Fi")
         allow_wifi_changes(pi)
+
+        step("Putting the Pi's clock in this time zone")
+        match_the_timezone(pi)
 
     step("Copying the code")
     copy_code(pi)
