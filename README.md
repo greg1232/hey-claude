@@ -133,6 +133,8 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/music.py` | Spotify — search, play, skip, volume |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
+| **Hardware** | |
+| `case/speaker-case.scad` | A printed case for the Pi and the mic array — see [case/README.md](case/README.md) |
 | `src/eggs.py` | The things it does that nobody told you about |
 | `src/wishes.py` | Writes down what it was asked for and can't do |
 | **Training and setup** | |
