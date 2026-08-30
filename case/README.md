@@ -68,6 +68,55 @@ Nothing in either part bridges more than 4 mm.
    four columns.
 5. Lid on, four M3 screws down into the columns.
 
+## Where the wires go
+
+Three leads. Two of them leave through the rear opening and one never
+leaves at all.
+
+    rear opening (50 deg of wall, floor to rim)
+        in    Pi power, USB-C, straight from the adapter
+        out   the array's 3.5 mm lead, to the speaker
+
+    inside, never leaves
+        the array's USB-C down to a Pi USB-A port
+
+Put the array in with **its sockets over the rear opening**, the same side
+the Pi's power lead comes in. Its 3.5 mm lead then drops straight down and
+out. Its USB lead turns and runs a quarter of the way round the inside —
+there is 8.6 mm of clear annulus between the board's rim and the wall, and
+another 9 mm of headroom between the top of the Pi's ports and the
+underside of the board, so a 3 mm cable has an easy time of it.
+
+### The one measurement that decides which cable to buy
+
+A Pi USB-A socket faces the wall across a gap that is **14.1 mm on the
+centre line and 9 mm at the outermost port**. A normal USB-A plug's
+moulding is 18 to 22 mm long. It does not fit, and the only way out is to
+bend the cable up — straight into the underside of the array.
+
+So the array's lead wants **a right-angle plug at each end**: right-angle
+USB-A at the Pi, turned so the cable runs round the wall rather than up
+into the board, and right-angle USB-C at the array. A slim straight USB-A
+will just about go into one of the middle two ports, with nothing to spare.
+
+By contrast the Pi's power socket has 30.6 mm to the wall, because it faces
+the opening across the widest part of the case. A straight plug is fine
+there, and that is the one lead you can buy without thinking about it.
+
+### The board can go in four ways round
+
+The LED ring is at 15 + 30k degrees, and 90 is three times 30, so **turning
+the array by a quarter turn leaves all twelve windows exactly where they
+were**. The microphones are not so tidy — that 1 mm offset means each one
+drifts 1.41 mm from its port — but the ports are 4.5 mm across at their
+narrowest, so a microphone still has 0.34 mm of clearance. It works, but it
+spends most of the margin.
+
+Sockets over the opening is still the orientation to prefer: everything
+lines up exactly, and the only cost is that the USB lead takes the long way
+round. Turn the board a quarter turn only if you would rather have the USB
+lead short and the thin 3.5 mm one take the long way instead.
+
 ## The feet are not decoration
 
 The case stands about 2 mm off the speaker, and that gap is doing two jobs.
