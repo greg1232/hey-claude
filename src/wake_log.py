@@ -228,7 +228,9 @@ def teach(vector, audio, label: int, why: str, source: str = "") -> None:
         number = _write(vector, audio, 1.0 if label else 0.0)
         with _lock, open(INDEX, "a") as handle:
             row = {"n": number, "label": int(label), "why": why,
-                   "taught": True}
+                   "taught": True,
+                   "labelled_at": datetime.now().astimezone().isoformat(
+                       timespec="seconds")}
             if source:
                 # Which recording this came from, so that somebody
                 # listening to that recording later can confirm it and

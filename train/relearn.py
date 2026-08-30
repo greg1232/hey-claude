@@ -176,7 +176,7 @@ def load_log():
     firings = wake_log.read()
     vectors = wake_log.vectors()
 
-    X, y, kind, when = [], [], [], []
+    X, y, kind, known = [], [], [], []
     thrown = 0
     for firing in firings:
         number = firing["n"]
@@ -191,7 +191,15 @@ def load_log():
         X.append(vectors[number])
         y.append(int(firing["label"]))
         kind.append(_kind(firing))
-        when.append(firing.get("at", ""))
+        # When this example became *known*, which is the later of when the
+        # speaker fired and when somebody said what the firing was. The
+        # difference is the whole point: an afternoon spent labelling a
+        # fortnight of old clips adds no rows at all, and it is the most
+        # valuable thing that happens to this model. Judged on the firing
+        # time alone, the gate sees nothing new and ends up comparing the
+        # model with itself.
+        known.append(max(firing.get("at", ""),
+                         firing.get("labelled_at", "")))
     if thrown:
         print(f"  ignored {thrown} labels from the old repetition rule")
     if not X:
@@ -199,7 +207,7 @@ def load_log():
                 np.zeros(0, dtype=int), np.zeros(0, dtype="<U8"),
                 np.zeros(0, dtype="<U32"))
     return (np.array(X, dtype=np.float32), np.array(y), np.array(kind),
-            np.array(when, dtype="<U32"))
+            np.array(known, dtype="<U32"))
 
 
 def _kind(firing: dict) -> str:
@@ -275,7 +283,7 @@ def _out_of_fold(bank_X, bank_y, log_X, log_y, log_kind, weight, held,
     return scored[held]
 
 
-def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
+def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_known, weight,
                   old, say):
     """Would the new model be better, on firings it has not been shown?
 
@@ -336,17 +344,24 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     # on data it was fitted on. That looked like the running model
     # catching 100% of everything at a threshold of 0.3, which is not
     # skill, it is memory. Models carry the time they were fitted, so
-    # anything logged since is fair to both.
+    # anything learned since is fair to both.
+    #
+    # "Learned since", not "fired since". A run once reported before and
+    # after agreeing to three decimal places — because nothing had been
+    # logged since the model was fitted, so 'before' was rebuilt from
+    # every row there was and the gate compared the model with itself.
+    # What had changed that day was sixty labels on old clips. Rows are
+    # not the unit of new information here; answers are.
     since = str(old["fitted_at"]) if "fitted_at" in old.files else ""
-    fresh = human & (log_when > since) if since else human
+    fresh = human & (log_known > since) if since else human
     seen_by_old = bool(since)
     if int(fresh.sum()) >= LEAST_TO_JUDGE and len(set(log_y[fresh])) > 1:
         human = fresh
         seen_by_old = False
-        say(f"  judging on the {int(human.sum())} logged since the running "
+        say(f"  judging on the {int(human.sum())} learned since the running "
             f"model was fitted, which neither has seen")
     elif since:
-        say(f"  only {int(fresh.sum())} logged since the running model was "
+        say(f"  only {int(fresh.sum())} learned since the running model was "
             "fitted, so judging on everything a person can vouch for — "
             "which the running model was fitted on")
 
@@ -414,7 +429,7 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_when, weight,
     # and asks it of both sides identically.
     before = None
     if seen_by_old:
-        earlier = log_when <= since
+        earlier = log_known <= since
         if int((earlier & ~held).sum()) >= LEAST_TO_JUDGE:
             before = _out_of_fold(bank_X, bank_y, log_X, log_y, log_kind,
                                   weight, held, only=earlier)
@@ -502,7 +517,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     # Compare against whatever is actually running, which is the learned
     # one if this machine has already learned something.
     running = LEARNED if LEARNED.exists() else model
-    log_X, log_y, log_kind, log_when = load_log()
+    log_X, log_y, log_kind, log_known = load_log()
 
     say(f"  bank: {len(bank_X)} features "
           f"({int((bank_y == 1).sum())} wake word, "
@@ -546,7 +561,7 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
 
     old = np.load(running)
     better, caught_after = _worth_having(
-        bank_X, bank_y, log_X, log_y, log_kind, log_when, weight, old, say)
+        bank_X, bank_y, log_X, log_y, log_kind, log_known, weight, old, say)
 
     if dry:
         say("  --dry, so nothing written.")

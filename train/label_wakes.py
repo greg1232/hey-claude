@@ -41,6 +41,7 @@ to listen to.
 """
 
 import argparse
+import datetime
 import json
 import re
 import sys
@@ -50,6 +51,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import wake_log  # noqa: E402
+
+
+def _now() -> str:
+    """When a label was decided, for relearn.py's freshness test."""
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 # What the wake window sounds like when it really was the wake word. Whisper
 # spells it a dozen ways — "hey Claude", "Hey, Cloud", "a clod" — so this
@@ -224,7 +230,8 @@ def ask_claude(unsure: list[dict]) -> None:
             number = verdict.get("n")
             if number is None or "real" not in verdict:
                 continue
-            _append({"n": number, "label": int(bool(verdict["real"])),
+            _append({"n": number, "labelled_at": _now(),
+                     "label": int(bool(verdict["real"])),
                      "why": f"claude: {verdict.get('why', '')}"[:120]})
         print(f"  labelled {min(start + BATCH, len(unsure))}"
               f"/{len(unsure)}")
@@ -302,7 +309,8 @@ def main() -> int:
         if label is None:
             unsure.append(firing)
         else:
-            _append({"n": firing["n"], "label": label, "why": why})
+            _append({"n": firing["n"], "label": label, "why": why,
+                     "labelled_at": _now()})
             free += 1
     print(f"  {free} settled without asking anyone, {len(unsure)} in doubt")
 

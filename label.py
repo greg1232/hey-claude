@@ -25,6 +25,7 @@ you're finished.
 """
 
 import argparse
+import datetime
 import http.server
 import io
 import json
@@ -226,9 +227,15 @@ def push(pi: str) -> int:
     real = {n: label for n, label in _answers.items() if n >= 0}
     if not real:
         return 0
+    # When the answer was given, which is not when the speaker fired.
+    # A person labelling a fortnight of old clips is the most valuable
+    # thing that happens to this model, and relearn.py can only see it as
+    # new data if the label says when it arrived. Same format and same
+    # time zone as the Pi writes, so the two can be compared as strings.
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     lines = "\n".join(json.dumps({
         "n": number, "label": label, "by": "person",
-        "why": "listened to by a person",
+        "why": "listened to by a person", "labelled_at": now,
     }) for number, label in sorted(real.items()))
     done = subprocess.run(
         ["ssh", pi, f"cat >> {REMOTE}/wakes.jsonl"],
