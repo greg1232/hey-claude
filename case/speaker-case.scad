@@ -92,10 +92,14 @@ REAR      = 266;
 REAR_WIDE = 72;
 SCREW_R = 65.0;     // four M3 down through the lid into the columns
 
-// Where the columns stand. Not evenly spaced: the one that used to be at
-// 225 lay across the path the power plug takes to the wall, so it moved to
-// 200. The others were already clear.
-COLS = [45, 135, 200, 315];
+// Where the columns stand. Not evenly spaced, and the odd one took two
+// tries. It began at 225, where it lay across the path the power plug takes
+// to the wall. Moved to 200, it cleared the plug and ran straight through
+// the Raspberry Pi instead — at 200 degrees the Pi's own corner reaches
+// r=45.2 and the shelf starts at 44. At 180 the Pi reaches only 42.5, so
+// the shelf clears it by 1.5 mm, and 180 is clear of the opening and of the
+// plug as well. The other three were right the first time.
+COLS = [45, 135, 180, 315];
 
 // Heights, stacked from the bench up.
 Z_PI      = FLOOR + PI_STANDOFF;
