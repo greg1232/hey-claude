@@ -37,12 +37,27 @@ is what I would use. Without it, retraining still works and simply says
 the model isn't archived.
 """
 
+import contextlib
 import csv
 import json
 import os
+import signal
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
+
+# Hugging Face's Xet backend hung a retrain here for good: 501 files reached
+# finalize_ingestion, then nothing moved for twenty minutes — one socket left
+# in CLOSE-WAIT, 1571 bytes sent of a hundred megabytes, and the whole
+# learning loop sat behind the lock it was holding. The plain HTTP path is
+# slower and finishes. Set HF_HUB_DISABLE_XET=0 in .env to try Xet again.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+# How long any single upload may take before we stop waiting for it. Generous
+# — a hundred megabytes over a home connection is minutes, not seconds — but
+# finite, which is the whole point.
+PATIENCE = int(os.environ.get("ARCHIVE_PATIENCE", "900"))
 
 HERE = Path(__file__).resolve().parent
 STATE = HERE.parent / "state"
@@ -94,12 +109,13 @@ def snapshot(say=print) -> str:
         api.create_repo(repo, repo_type="dataset", private=True,
                         exist_ok=True)
         say(f"  archiving {', '.join(f'{v} {k}' for k, v in counted.items())}")
-        commit = api.upload_folder(
-            folder_path=str(STATE), repo_id=repo, repo_type="dataset",
-            allow_patterns=[f"{name}*" for name in KEEP]
-                           + [f"{name}/**" for name in KEEP],
-            commit_message=f"Data as of {datetime.now().astimezone():%Y-%m-%d %H:%M}",
-        )
+        with patience(PATIENCE, "the dataset upload"):
+            commit = api.upload_folder(
+                folder_path=str(STATE), repo_id=repo, repo_type="dataset",
+                allow_patterns=[f"{name}*" for name in KEEP]
+                               + [f"{name}/**" for name in KEEP],
+                commit_message=f"Data as of {datetime.now().astimezone():%Y-%m-%d %H:%M}",
+            )
         sha = getattr(commit, "oid", "") or ""
         say(f"  dataset committed as {sha[:8]} in {repo}")
         keep_recordings(api, repo, say)
@@ -107,6 +123,36 @@ def snapshot(say=print) -> str:
     except Exception as error:
         say(f"  couldn't archive ({type(error).__name__}: {error})")
         return ""
+
+
+@contextlib.contextmanager
+def patience(seconds: int, what: str):
+    """Put a wall clock on a network call.
+
+    Everything below already runs inside `try: ... except Exception`, which
+    is a defence against the upload *failing*. It is not a defence against
+    the upload never returning, and that is what actually happened: no
+    exception was ever raised, because nothing ever went wrong — it simply
+    stopped. An alarm turns a hang into an exception the existing handler
+    already knows what to do with.
+
+    SIGALRM only lands on the main thread, so off it this does nothing but
+    get out of the way.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def ring(signum, frame):
+        raise TimeoutError(f"{what} got nowhere in {seconds}s")
+
+    before = signal.signal(signal.SIGALRM, ring)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, before)
 
 
 def keep_recordings(api, repo: str, say=print) -> None:
@@ -127,10 +173,11 @@ def keep_recordings(api, repo: str, say=print) -> None:
             continue
         say(f"  uploading {want - have} recordings of {what} (once)")
         try:
-            api.upload_folder(folder_path=str(folder), repo_id=repo,
-                              repo_type="dataset", path_in_repo=where,
-                              allow_patterns=["*.wav"],
-                              commit_message=f"The {what}")
+            with patience(PATIENCE, f"the {what} upload"):
+                api.upload_folder(folder_path=str(folder), repo_id=repo,
+                                  repo_type="dataset", path_in_repo=where,
+                                  allow_patterns=["*.wav"],
+                                  commit_message=f"The {what}")
         except Exception as error:
             say(f"    couldn't ({type(error).__name__}: {error})")
 
@@ -145,10 +192,11 @@ def keep_model(model: Path, sha: str, scores: dict, say=print) -> None:
         api = HfApi(token=token())
         repo = f"{api.whoami()['name']}/{REPO}"
         name = f"models/{datetime.now().astimezone():%Y-%m-%d}-{sha[:8]}.npz"
-        api.upload_file(path_or_fileobj=str(model), path_in_repo=name,
-                        repo_id=repo, repo_type="dataset",
-                        commit_message=f"Model from {sha[:8]}: " + ", ".join(
-                            f"{k} {v:.0%}" for k, v in scores.items()))
+        with patience(PATIENCE, "the model upload"):
+            api.upload_file(path_or_fileobj=str(model), path_in_repo=name,
+                            repo_id=repo, repo_type="dataset",
+                            commit_message=f"Model from {sha[:8]}: " + ", ".join(
+                                f"{k} {v:.0%}" for k, v in scores.items()))
         say(f"  model kept as {name}")
     except Exception as error:
         say(f"  couldn't keep the model ({type(error).__name__})")
