@@ -75,13 +75,27 @@ PI_PILOT    = 2.4;  // M2.5 self-tapping
 
 /* ---- the case ------------------------------------------------------- */
 
-CASE_D  = 122;      // leaves 8.6 mm around the array for right-angle plugs
+// 140, not 122. At 122 the case was a right-angle-plug case and I had not
+// said so: a Pi's USB-C power socket sits 34.5 mm off the centre line, so
+// its plug had 19.4 mm before it met the wall and needed 26, and the USB-A
+// carrying the array's lead had 14.1 and needed 20. Nine more millimetres
+// of radius buys 30.1 and 23.1, and every plug goes in straight.
+CASE_D  = 140;
 LID_T   = 2.5;
 FOOT_D  = 10;       // stick-on silicone bumpers
 FOOT_H  = 1.2;
-REAR      = 270;    // cables leave towards -Y
-REAR_WIDE = 50;     // degrees of wall given over to them
-SCREW_R = 56.0;     // four M3 down through the lid into the columns
+// The opening is centred on where the plugs actually come out, which is
+// not where the case's own axis is. The power plug meets the wall at 239
+// degrees, micro-HDMI at 252, and the array's own sockets sit between 250
+// and 295. So: 230 to 302.
+REAR      = 266;
+REAR_WIDE = 72;
+SCREW_R = 65.0;     // four M3 down through the lid into the columns
+
+// Where the columns stand. Not evenly spaced: the one that used to be at
+// 225 lay across the path the power plug takes to the wall, so it moved to
+// 200. The others were already clear.
+COLS = [45, 135, 200, 315];
 
 // Heights, stacked from the bench up.
 Z_PI      = FLOOR + PI_STANDOFF;
@@ -142,7 +156,7 @@ module wall_slots(z0, z1, count, width, skip_from, skip_to) {
 module floor_vents() {
     difference() {
         for (i = [0 : 11]) rotate([0, 0, i * 30])
-            for (r = [14 : 9 : 50])
+            for (r = [14 : 9 : R_IN - 10])
                 translate([r, 0, FLOOR / 2])
                     cube([5, 3, FLOOR + 2], center = true);
         pi_hole_positions() translate([0, 0, -1]) cylinder(d = 13, h = FLOOR + 3);
@@ -163,7 +177,7 @@ module base() {
             // array; the outer part carries the lid and takes its screw.
             // Both start well outboard of the Pi, which occupies the middle
             // of the case up to Z_PI_TOP.
-            for (a = [45, 135, 225, 315]) rotate([0, 0, a]) {
+            for (a = COLS) rotate([0, 0, a]) {
                 translate([BOARD_D / 2 - 6, -3, 0])
                     cube([R_IN - BOARD_D / 2 + 6, 6, Z_BOARD]);
                 translate([BOARD_D / 2 + 0.5, -4.5, 0])
@@ -181,7 +195,7 @@ module base() {
         translate([0, 0, Z_BOARD]) cylinder(r = BOARD_D / 2 + FIT, h = H);
 
         // Screw pilots, down through the columns.
-        for (a = [45, 135, 225, 315])
+        for (a = COLS)
             rotate([0, 0, a]) translate([SCREW_R, 0, Z_LID - 14])
                 cylinder(d = 2.5, h = 16);
 
@@ -202,8 +216,8 @@ module base() {
 
         // Side and floor venting. A Pi 4 running the wake word all day is
         // a 5 W heater, and PLA gives up at about 60 C.
-        wall_slots(8, 24, 24, 3.5, 240, 300);
-        wall_slots(Z_PI_TOP + 1, Z_SEAM - 1.5, 24, 3.5, 240, 300);
+        wall_slots(8, 24, 28, 3.5, 225, 305);
+        wall_slots(Z_PI_TOP + 1, Z_SEAM - 1.5, 28, 3.5, 225, 305);
         floor_vents();
 
         // Feet.
@@ -245,7 +259,7 @@ module lid() {
             cylinder(d1 = 5.5, d2 = 4.5, h = LID_T + 0.02);
 
         // Screws, counterbored so nothing stands proud of the top.
-        for (a = [45, 135, 225, 315]) rotate([0, 0, a]) {
+        for (a = COLS) rotate([0, 0, a]) {
             translate([SCREW_R, 0, Z_LID - 1]) cylinder(d = 3.4, h = LID_T + 2);
             translate([SCREW_R, 0, Z_LID + LID_T - 1.8])
                 cylinder(d = 6.0, h = 2);
@@ -257,7 +271,7 @@ module lid() {
             sector(R_OUT + 1, LID_GAP + 0.02, 0, REAR_WIDE);
 
         // Warm air leaves at the top.
-        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 24, 3, 240, 300);
+        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 28, 3, 225, 305);
     }
 }
 
