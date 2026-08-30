@@ -90,6 +90,17 @@ FOOT_H  = 1.2;
 // and 295. So: 230 to 302.
 REAR      = 266;
 REAR_WIDE = 72;
+
+// And a second doorway over the Pi's short edge, where Ethernet and the four
+// USB ports face. Nothing in the build needs it — the array's lead lives
+// inside — but it is the difference between a Pi you can put a network cable
+// or a keyboard into and one you have to unscrew first. Ethernet had 20.7 mm
+// against the 22 a plug wants; with the wall gone it simply passes through.
+//
+// Centred on 0 degrees, because that is where those plugs cross the wall:
+// Ethernet at 338-351, the USB 3.0 pair at 354-6, the USB 2.0 pair at 10-21.
+PORTS      = 0;
+PORTS_WIDE = 50;
 SCREW_R = 65.0;     // four M3 down through the lid into the columns
 
 // Where the columns stand. Not evenly spaced, and the odd one took two
@@ -141,13 +152,21 @@ module pi_hole_positions()
         translate([PI_HOLE_OFF + x * PI_HOLES[0] / 2, y * PI_HOLES[1] / 2, 0])
             children();
 
-// A ring of vertical slots through the wall. One slot per angle, cut from
-// the outside in — a bar through the middle would quietly cut the far side
-// of the case as well, including the parts meant to be left whole.
-module wall_slots(z0, z1, count, width, skip_from, skip_to) {
+// Is angle `a` inside the arc from `lo` to `hi`? Written to survive an arc
+// that crosses zero, which the port doorway does.
+function in_arc(a, lo, hi) =
+    (lo <= hi) ? (a >= lo && a <= hi) : (a >= lo || a <= hi);
+
+// A ring of vertical slots through the wall, skipping the two doorways. One
+// slot per angle, cut from the outside in — a bar through the middle would
+// quietly cut the far side of the case as well, including the parts meant to
+// be left whole.
+module wall_slots(z0, z1, count, width) {
     for (i = [0 : count - 1]) {
         a = i * 360 / count;
-        if (!(a >= skip_from && a <= skip_to))
+        if (!in_arc(a, REAR - REAR_WIDE / 2 - 4, REAR + REAR_WIDE / 2 + 4) &&
+            !in_arc(a, (PORTS - PORTS_WIDE / 2 - 4 + 360) % 360,
+                       (PORTS + PORTS_WIDE / 2 + 4) % 360))
             rotate([0, 0, a])
                 translate([R_IN - 1, -width / 2, z0])
                     cube([WALL + 2, width, z1 - z0]);
@@ -217,11 +236,13 @@ module base() {
         // sagging lintel is a worse thing to own than a taller doorway.
         translate([0, 0, 5]) rotate([0, 0, REAR - REAR_WIDE / 2])
             sector(R_OUT + 1, Z_SEAM - 5 + 0.01, 0, REAR_WIDE);
+        translate([0, 0, 5]) rotate([0, 0, PORTS - PORTS_WIDE / 2])
+            sector(R_OUT + 1, Z_SEAM - 5 + 0.01, 0, PORTS_WIDE);
 
         // Side and floor venting. A Pi 4 running the wake word all day is
         // a 5 W heater, and PLA gives up at about 60 C.
-        wall_slots(8, 24, 28, 3.5, 225, 305);
-        wall_slots(Z_PI_TOP + 1, Z_SEAM - 1.5, 28, 3.5, 225, 305);
+        wall_slots(8, 24, 28, 3.5);
+        wall_slots(Z_PI_TOP + 1, Z_SEAM - 1.5, 28, 3.5);
         floor_vents();
 
         // Feet.
@@ -275,7 +296,7 @@ module lid() {
             sector(R_OUT + 1, LID_GAP + 0.02, 0, REAR_WIDE);
 
         // Warm air leaves at the top.
-        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 28, 3, 225, 305);
+        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 28, 3);
     }
 }
 

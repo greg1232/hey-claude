@@ -140,7 +140,8 @@ tr:last-child td { border-bottom:0; }
 
 <dl class="spec">
   <div><dt>Case</dt><dd>Ø140 × 43</dd></div>
-  <div><dt>Rear opening</dt><dd>230°–302°</dd></div>
+  <div><dt>Rear doorway</dt><dd>230°–302°</dd></div>
+  <div><dt>Port doorway</dt><dd>335°–25°</dd></div>
   <div><dt>Columns</dt><dd>45 · 135 · 180 · 315</dd></div>
   <div><dt>Array sits at</dt><dd>34.9 mm</dd></div>
   <div><dt>Cable headroom</dt><dd>9 mm</dd></div>
@@ -150,11 +151,15 @@ tr:last-child td { border-bottom:0; }
 <figure>
   <div class="figscroll">
   <svg viewBox="-108 -92 216 200" role="img"
-       aria-label="Plan view of the case: the Raspberry Pi lies flat in the middle on four standoffs, the mic array sits above it as a dashed 100 mm circle, and three cables route to a rear opening spanning 230 to 302 degrees.">
-    <path class="wall" d="M 36.46,58.35 A 68.8 68.8 0 1 0 -44.22,52.70" />
+       aria-label="Plan view of the case: the Raspberry Pi lies flat in the middle on four standoffs, the mic array sits above it as a dashed 100 mm circle, three cables route to a rear doorway spanning 230 to 302 degrees, and a second doorway from 335 to 25 degrees leaves the Ethernet and USB ports reachable.">
+<path class="wall" d="M 36.46,58.35 A 68.8 68.8 0 0 0 62.35,29.08" />
+<path class="wall" d="M 62.35,-29.08 A 68.8 68.8 0 1 0 -44.22,52.70" />
 <line class="cut" x1="-43.45" y1="51.78" x2="-45.00" y2="53.62" />
 <line class="cut" x1="35.82" y1="57.33" x2="37.09" y2="59.36" />
 <path class="openarc" d="M -44.22,52.70 A 68.8 68.8 0 0 0 36.46,58.35" />
+<line class="cut" x1="61.27" y1="28.57" x2="63.44" y2="29.58" />
+<line class="cut" x1="61.27" y1="-28.57" x2="63.44" y2="-29.58" />
+<path class="openarc" d="M 62.35,29.08 A 68.8 68.8 0 0 0 62.35,-29.08" />
 <polygon class="shelf" points="28.99,-33.23 45.68,-49.92 49.92,-45.68 33.23,-28.99" />
 <polygon class="col" points="32.53,-38.89 44.62,-50.98 50.98,-44.62 38.89,-32.53" />
 <circle class="screw" cx="45.96" cy="-45.96" r="1.7" />
@@ -232,9 +237,12 @@ tr:last-child td { border-bottom:0; }
     <line class="ldr" x1="-44" y1="0" x2="-72" y2="-8"/>
     <text x="-74" y="-10" text-anchor="end">column, 180°</text>
     <text x="-74" y="-3" text-anchor="end" class="dim">moved off 225° and 200°</text>
-    <line class="ldr" x1="55" y1="-0.5" x2="78" y2="-16"/>
-    <text x="80" y="-18">USB 3.0 — use this pair</text>
-    <text x="80" y="-11" class="dim">23.1 mm to the wall</text>
+    <line class="ldr" x1="55" y1="-0.5" x2="80" y2="-24"/>
+    <text x="82" y="-26">USB 3.0 — use this pair</text>
+    <text x="82" y="-19" class="dim">23.1 mm to the wall</text>
+    <line class="ldr" x1="68" y1="14" x2="86" y2="34"/>
+    <text x="88" y="36" class="strong">port doorway · 335°–25°</text>
+    <text x="88" y="43" class="dim">Ethernet and four USB, left open</text>
   </g>
 
     
@@ -251,7 +259,10 @@ tr:last-child td { border-bottom:0; }
   opening</b> and the USB stack facing right. The four grey wedges are the columns: they carry
   the array on a shelf at 34.9 mm and take the lid screws. They also cut the outer ring into
   four compartments, which is why the array lead crosses <b>over the Pi</b> rather than round
-  the outside.</figcaption>
+  the outside. The second doorway on the right is not needed to build the thing — it is
+  there so <b>Ethernet and the USB ports stay reachable</b> without unscrewing the lid.
+  Both doorways run from 5 mm to the rim rather than stopping short of it: a window with
+  wall above it would need the printer to bridge sixty millimetres unsupported.</figcaption>
 </figure>
 
 <h2>Section — the stack, cut through the opening</h2>
@@ -337,6 +348,8 @@ tr:last-child td { border-bottom:0; }
   the white JST connector is the bottom. Upside down, the lid stands proud on the JST and the
   microphones aim into the Pi.</p>
   <p><b>Use the blue USB 3.0 ports for the array lead.</b> They have 23.1 mm to the wall. The
-  outer pair has 20.5, which a plug will just about make and nothing more.</p>
+  outer pair has 20.5, which a plug will just about make and nothing more — and both are
+  measured to a wall that is now a doorway anyway, so a plug that overshoots simply pokes
+  out of it.</p>
 </div>
 </div>

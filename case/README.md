@@ -53,17 +53,20 @@ a bag of adapters and one that takes the leads already on the desk. The
 array's own lead goes into one of the **blue USB 3.0 ports** — those are the
 pair with 23.1 mm; the outer pair has 20.5 and is tighter.
 
-Ethernet is the one thing still short, by about 1.3 mm, and there is no
-opening on that side. It stays unreachable without taking the lid off. Say
-the word and it is a one-line change.
+Ethernet is the one measurement still short, by about 1.3 mm — which stopped
+mattering the moment there was a doorway on that side for it to pass through.
 
 ## Where the wires go
 
 Three leads. Two leave through the rear opening and one never leaves at all.
 
-    rear opening, 230 to 302 deg, floor to rim
+    rear doorway, 230 to 302 deg, floor to rim
         in    Pi power, USB-C, straight from the adapter
         out   the array's 3.5 mm lead, to the speaker
+
+    port doorway, 335 to 25 deg, floor to rim
+        nothing, in normal use -- it is there so Ethernet and the
+        four USB ports stay reachable without unscrewing the lid
 
     inside, never leaves
         the array's USB-C down to a Pi USB 3.0 port
@@ -71,10 +74,19 @@ Three leads. Two leave through the rear opening and one never leaves at all.
 Put the array in with **its sockets over the rear opening**, the same side
 the Pi's power lead comes in.
 
-The opening is centred on 266°, not on the case's own 270° axis, because
-that is where the plugs actually arrive: the power plug crosses the wall
-between 236° and 243°, micro-HDMI between 249° and 255°, and the array's
-sockets sit between 250° and 295°. All three are inside 230–302.
+The rear doorway is centred on 266°, not on the case's own 270° axis,
+because that is where the plugs actually arrive: the power plug crosses the
+wall between 236° and 243°, micro-HDMI between 249° and 255°, the A/V jack
+between 276° and 282°, and the array's sockets sit between 250° and 295°.
+All of them are inside 230–302.
+
+The port doorway is centred on 0° for the same reason: Ethernet crosses at
+338–351°, the USB 3.0 pair at 354–6°, the USB 2.0 pair at 10–21°.
+
+Both run from 5 mm up to the rim rather than stopping short of it. A window
+with wall above it would need the printer to bridge sixty millimetres
+unsupported, and a sagging lintel is a worse thing to own than a taller
+doorway.
 
 The four columns are at **45, 135, 180 and 315°** — not evenly spaced, and
 the odd one took two tries. It began at 225°, lying directly across the path
