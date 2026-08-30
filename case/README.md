@@ -76,9 +76,13 @@ that is where the plugs actually arrive: the power plug crosses the wall
 between 236° and 243°, micro-HDMI between 249° and 255°, and the array's
 sockets sit between 250° and 295°. All three are inside 230–302.
 
-The four columns are at **45, 135, 200 and 315°** — not evenly spaced. The
-one that used to be at 225° lay directly across the path the power plug
-takes to the wall. The others were already clear.
+The four columns are at **45, 135, 180 and 315°** — not evenly spaced, and
+the odd one took two tries. It began at 225°, lying directly across the path
+the power plug takes to the wall. Moved to 200° it cleared the plug and ran
+through the Raspberry Pi instead: at 200° the Pi's own corner reaches
+r = 45.2 mm and the shelf starts at 44. At 180° the Pi reaches only 42.5, so
+the shelf clears it by 1.5 mm, and 180° is clear of the opening and of the
+plug as well. The other three were right the first time.
 
 ## The board can go in four ways round
 
