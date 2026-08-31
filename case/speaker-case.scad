@@ -103,6 +103,20 @@ PORTS      = 0;
 PORTS_WIDE = 50;
 SCREW_R = 65.0;     // four M3 down through the lid into the columns
 
+/* ---- the logo on the lid -------------------------------------------- */
+// "arcs", "loop", "wordmark" or "none".
+LOGO       = "arcs";
+LOGO_FONT  = "Avenir Next Condensed:style=Bold";
+// Cut into the top face, not raised off it. The lid prints face down, so a
+// recess is simply a gap in the first three layers — crisp, no supports,
+// and nothing proud to catch a child's fingernail. Raised lettering would
+// have to print into the plate, which is not a thing.
+LOGO_DEPTH = 0.6;
+// Everything must live inside the LED ring. The windows sit at r = 32 and
+// open Ø5 at the top face, so their inner edge is at 29.5; 26 leaves a
+// clear ring of daylight between the mark and the lights.
+LOGO_R     = 28;
+
 // Where the columns stand. Not evenly spaced, and the odd one took two
 // tries. It began at 225, where it lay across the path the power plug takes
 // to the wall. Moved to 200, it cleared the plug and ran straight through
@@ -123,6 +137,57 @@ H         = Z_LID + LID_T;              // overall
 
 R_OUT = CASE_D / 2;
 R_IN  = R_OUT - WALL;
+
+/* ---- the logo ------------------------------------------------------- */
+
+// A 2D arc: a ring, trimmed to a wedge.
+module arc2d(r, w, from, to, steps = 48) {
+    intersection() {
+        difference() {
+            circle(r = r + w / 2);
+            circle(r = r - w / 2);
+        }
+        polygon(concat([[0, 0]],
+            [for (i = [0 : steps])
+                let (a = from + (to - from) * i / steps)
+                [(r + w) * cos(a), (r + w) * sin(a)]]));
+    }
+}
+
+// Sound leaving a point. Three arcs and the thing they come from — the
+// same gesture the speaker makes with its ring, drawn at a different size
+// and cut short, so it reads as a mark rather than a second ring.
+module logo_arcs() {
+    translate([0, 5.5]) {
+        circle(r = 2.3, $fn = 48);
+        for (r = [5.8, 9.6, 13.4]) arc2d(r, 2.0, 32, 148);
+    }
+    translate([0, -12])
+        text("JASBROS", size = 8.2, font = LOGO_FONT,
+             halign = "center", valign = "center", spacing = 1.04);
+}
+
+// A loop with one break in it. The speaker keeps almost everything in the
+// house; exactly one step of the loop leaves. That is the whole idea of
+// the thing, and it happens to draw well.
+module logo_loop() {
+    translate([0, 6]) arc2d(11.5, 3.6, -55, 235);
+    translate([0, -12])
+        text("JASBROS", size = 8.2, font = LOGO_FONT,
+             halign = "center", valign = "center", spacing = 1.04);
+}
+
+// Just the name, as large as the ring allows.
+module logo_wordmark() {
+    text("JASBROS", size = 9.5, font = LOGO_FONT,
+         halign = "center", valign = "center", spacing = 1.02);
+}
+
+module logo_2d() {
+    if (LOGO == "arcs") logo_arcs();
+    else if (LOGO == "loop") logo_loop();
+    else if (LOGO == "wordmark") logo_wordmark();
+}
 
 /* ---- helpers -------------------------------------------------------- */
 
@@ -282,6 +347,15 @@ module lid() {
         // MEMS microphone is a resonator; an open window is not.
         mic_positions() translate([0, 0, Z_LID - 0.01])
             cylinder(d1 = 5.5, d2 = 4.5, h = LID_T + 0.02);
+
+        // The logo, cut into the top face.
+        if (LOGO != "none")
+            translate([0, 0, H - LOGO_DEPTH])
+                linear_extrude(LOGO_DEPTH + 0.01)
+                    intersection() {
+                        logo_2d();
+                        circle(r = LOGO_R, $fn = 96);
+                    }
 
         // Screws, counterbored so nothing stands proud of the top.
         for (a = COLS) rotate([0, 0, a]) {

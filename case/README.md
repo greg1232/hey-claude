@@ -121,6 +121,49 @@ the lights and microphones are aimed into the Pi.
 - A USB-C to USB-A lead for the array, 20 cm or so. Straight plugs are fine.
 - A 3.5 mm lead from the array to the speaker
 
+## The logo
+
+Cut into the middle of the lid, inside the ring of lights.
+
+    LOGO = "arcs"       sound leaving a point, JASBROS beneath  (default)
+    LOGO = "loop"       a ring with one break in it, JASBROS beneath
+    LOGO = "wordmark"   just the name, as large as the ring allows
+    LOGO = "none"       a plain lid
+
+Change the line at the top of `speaker-case.scad` and run `./case/build.sh`.
+`case/logo-options.png` shows all three.
+
+The *loop* is the one with an argument behind it. The speaker keeps almost
+everything in the house and exactly one step of the loop leaves — a closed
+ring with a single gap is that idea, and it happens to draw well at 23 mm.
+The *arcs* is the one people recognise without being told.
+
+### Why it is cut in, not raised
+
+The lid prints face down, so its top surface is laid straight onto the
+plate. A recess is then simply a gap in the first three layers: crisp
+edges, no supports, and nothing standing proud for a child's fingernail to
+catch. Raised lettering would have to print *into* the plate, which is not
+a thing.
+
+It is 0.6 mm deep — three layers at 0.2 — and that gives it away free in a
+second colour if you want one, with no AMS:
+
+    layer 4   swap to the accent colour
+    layer 5   swap back
+
+Layers 1–3 carry the top face, so the logo is the only place the accent
+shows through. Everything above layer 5 is buried.
+
+### Sizing type from a measurement
+
+`JASBROS` in Avenir Next Condensed Bold is **50.7 mm wide at size 10** — a
+third wider than it looks. Two attempts at guessing ran the J and the last
+S past the edge of the logo circle, where the intersection with `LOGO_R`
+sliced them clean off and left `ASBRO`. The sizes in the file now come from
+measuring the rendered text and solving for the corner radius. If you change
+the font, measure it again rather than trusting the shape of the letters.
+
 ## Printing
 
 P1S, PLA, 0.4 mm nozzle, 0.2 mm layers. Both parts are exported already
