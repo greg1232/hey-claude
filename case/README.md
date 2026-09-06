@@ -84,7 +84,7 @@ The port doorway is centred on 0° for the same reason: Ethernet crosses at
 338–351°, the USB 3.0 pair at 354–6°, the USB 2.0 pair at 10–21°.
 
 Both run from 5 mm up to the rim rather than stopping short of it. A window
-with wall above it would need the printer to bridge sixty millimetres
+with wall above it would need the printer to bridge seventy millimetres
 unsupported, and a sagging lintel is a worse thing to own than a taller
 doorway.
 
