@@ -13,9 +13,8 @@ on a laptop, and properly on a Raspberry Pi with a microphone array.
                                                   music, the weather…
 ```
 
-Everything up to Claude runs on the machine itself: the wake word, the
-speech recognition and the voice. Nothing is sent anywhere until there's a
-question to ask.
+The wake word, the speech recognition and the voice all run on the machine
+itself. Nothing leaves the house until there is a question to ask.
 
 ## Setup
 
@@ -33,28 +32,23 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Then open `.env` and paste in your key from
-[console.anthropic.com](https://console.anthropic.com/settings/keys).
-`.env` is in `.gitignore`, so it never gets committed.
+Open `.env` and paste in your key from
+[console.anthropic.com](https://console.anthropic.com/settings/keys). `.env`
+is in `.gitignore`, so it never gets committed.
 
 **3. Pick the right microphone.** macOS sometimes defaults to a virtual
 audio device (BlackHole, Loopback, Zoom) that records what the computer is
-*playing* instead of what you're *saying*. Check which one is the default:
+*playing* instead of what you are *saying*:
 
 ```bash
 python src/audio_in.py --devices
 ```
 
-If the one marked `<- default` isn't your real microphone, add a line to
-`.env`:
+If the one marked `<- default` isn't your real microphone, put
+`INPUT_DEVICE=MacBook Air Microphone` in `.env`.
 
-```
-INPUT_DEVICE=MacBook Air Microphone
-```
-
-**4. Let the terminal use the microphone.** macOS will ask the first time.
-If it doesn't, turn it on under
-System Settings → Privacy & Security → Microphone.
+**4. Let the terminal use the microphone.** macOS asks the first time. If it
+doesn't, turn it on under System Settings → Privacy & Security → Microphone.
 
 ## Running it
 
@@ -63,13 +57,12 @@ python src/main.py           # the real thing — say the wake word
 python src/main.py --text    # type questions instead of speaking them
 ```
 
-Press Ctrl-C to stop. On the Pi it runs as a service, and `./start.sh`
-starts, stops and reports on that — see
+Ctrl-C stops it. On the Pi it runs as a systemd service — see
 [docs/raspberry-pi.md](docs/raspberry-pi.md).
 
 ## Living with it
 
-Five commands, all from this folder on the laptop:
+Six commands, all from this folder on the laptop:
 
 ```bash
 ./deploy.sh              # put the current code on the Pi
@@ -77,19 +70,21 @@ Five commands, all from this folder on the laptop:
 ./wishes.sh              # what it was asked for and couldn't do
 ./label.sh               # listen to what woke it, and say if it was right
 ./relearn.sh             # teach it from today — it also runs itself at 4am
-./evaluate.sh            # how good is the wake word, really
-                         # and http://<the pi>:8080 for the dashboard
-./evaluate.sh --compare  # which training recipe is actually better
+./evaluate.sh            # how good the wake word is on firings it hasn't seen
+./evaluate.sh --compare  # which training recipe is better
 ```
 
 `./label.sh` is the one worth a few minutes a week. It plays back the clips
-that woke the speaker and you answer yes or no; those answers are what the
-retraining is judged against, and they are the only ground truth the
-project has. See [docs/wake-word.md](docs/wake-word.md).
+that woke the speaker and you answer yes or no; those answers are the only
+ground truth the project has, and the nightly retraining is judged against
+them. See [docs/wake-word.md](docs/wake-word.md).
+
+The dashboard is at `http://<the pi>:8080`.
 
 ## Trying one piece at a time
 
-Each file runs on its own, which makes it easy to find what's broken:
+Every file runs on its own, which is how you find what's broken. All of them
+take `--help`, including the ones in `train/`.
 
 ```bash
 python src/tts.py            # 1. make it talk
@@ -105,8 +100,6 @@ python src/books.py --shelf  #    the children's shelf, from 48,284 books
 python src/music.py          #    what Spotify is playing, and where
 python src/wake_log.py       #    what has woken it, and how those went
 ```
-
-Every script takes `--help`, including the ones in `train/`.
 
 ## The files
 
@@ -133,10 +126,10 @@ Every script takes `--help`, including the ones in `train/`.
 | `src/music.py` | Spotify — search, play, skip, volume |
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
-| **Hardware** | |
-| `case/speaker-case.scad` | A printed case for the Pi and the mic array — see [case/README.md](case/README.md) |
-| `src/eggs.py` | The things it does that nobody told you about |
 | `src/wishes.py` | Writes down what it was asked for and can't do |
+| `src/eggs.py` | The things it does that nobody told you about |
+| **Hardware** | |
+| `case/speaker-case.scad` | A printed case for the Pi and the array — see [case/README.md](case/README.md) |
 | **Training and setup** | |
 | `train/record_wake.py` | Records people saying the wake word |
 | `train/record_room.py` | Records the room not saying it |
@@ -150,12 +143,11 @@ Every script takes `--help`, including the ones in `train/`.
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | **On the laptop** | |
-| `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh` runs it) |
-| `start.py` | Starts and stops the service (`./start.sh` runs it) |
-| `wishes.py` | Reads the wishes off the Pi (`./wishes.sh` runs it) |
+| `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh`) |
+| `start.py` | Starts and stops the service (`./start.sh`) |
+| `wishes.py` | Reads the wishes off the Pi (`./wishes.sh`) |
 | `label.py` | Listen to what woke it and say if it was right (`./label.sh`) |
-| `relearn.py` | Make it learn from today, now (`./relearn.sh` runs it) |
-
+| `relearn.py` | Make it learn from today, now (`./relearn.sh`) |
 
 Only `brain.py`, `weather.py`, `effects.py`, `books.py` and `music.py` use
 the internet. The microphone, the wake word, the speech recognition and the
@@ -174,15 +166,13 @@ voice all run on the machine itself.
 "hey claude, read me Treasure Island"
 "hey claude, play Baby Shark"
 "hey claude, learn my voice"
-"hey claude, can you keep score for our game"    <- writes down a wish
+"hey claude, can you keep score for our game"  <- writes down a wish
 ```
 
-There are also ten things it does that aren't written down here, from
-Groot to Mark Rober. They're meant to be found by accident; if you need to
-know, they're in `src/eggs.py`.
-
-Each is a tool. See **[docs/capabilities.md](docs/capabilities.md)** for
-what each one does and how to set the ones up that need keys.
+Twenty-eight tools in all, plus ten things it does that aren't written down
+here. Those are meant to be found by accident; if you need to know, they are
+in `src/eggs.py`. See **[docs/capabilities.md](docs/capabilities.md)** for
+every tool and the settings it needs.
 
 ## The documentation
 
@@ -190,32 +180,23 @@ what each one does and how to set the ones up that need keys.
 |---|---|
 | **[docs/capabilities.md](docs/capabilities.md)** | Everything it can do, and the settings for each |
 | **[docs/tools.md](docs/tools.md)** | How tools work, and how to add one |
-| **[docs/wake-word.md](docs/wake-word.md)** | Why the obvious library didn't work, and what does |
-| **[docs/raspberry-pi.md](docs/raspberry-pi.md)** | Deploying, the services, the microphone array, the voice |
+| **[docs/wake-word.md](docs/wake-word.md)** | How it hears its name, and how it learns |
+| **[docs/raspberry-pi.md](docs/raspberry-pi.md)** | Deploying, the services, the array, the voice |
 | **[docs/dashboard.md](docs/dashboard.md)** | The page served from the Pi |
 | **[docs/troubleshooting.md](docs/troubleshooting.md)** | When something goes wrong |
-| **[docs/design.md](docs/design.md)** | The original plan, kept as written |
 
-## What's next
-
-Not built, roughly in order of how much they'd improve an evening with it:
+## Not built yet
 
 - **A follow-up window.** Keep listening for a few seconds after answering,
-  so a conversation doesn't need the wake word every turn. The single
-  biggest change to how it feels to use, and nothing stands in the way.
-- **Barge-in.** Half of it exists: "I have spoken" stops it mid-sentence,
-  and speech is now cut between tenth-of-a-second blocks. The other half is
-  hard — with the microphone left open the speaker's own voice scores 0.991
-  against a 0.95 threshold, so it interrupts *itself* on about one sentence
-  in four. The fix is training data, and it's free to make: play, record,
-  label every window a negative.
-- **Human "yes" labels.** The learning loop works and the gate refuses bad
-  models, but of 203 answers a person has given, 202 were "no" — which
-  measures false wakes and says nothing about recall. Confirming a dozen
-  real firings would fix that. See [docs/wake-word.md](docs/wake-word.md).
+  so a conversation doesn't need the wake word every turn.
+- **Barge-in.** It can be stopped mid-sentence by saying "I have spoken",
+  but with the microphone left open its own voice scores 0.991 against a
+  0.95 threshold, so it interrupts itself on about one sentence in four.
 - **Memory between runs.** It forgets everything when it restarts,
   including who it is talking to.
-- **Children's speech.** `tiny.en` is where small Whisper models struggle
-  most, and a misheard question is indistinguishable from a dumb answer.
-  Fine-tuning on children's speech is unusually well evidenced — around a
-  third off the error rate — and the recordings are already in this repo.
+- **Children's speech.** `tiny.en` struggles most with exactly the voices
+  this is for. Fine-tuning is well evidenced — around a third off the error
+  rate — and the recordings are already in this repo.
+- **More than one speaker.** `.deploy-target` holds a single host, and
+  `train/archive.py` uploads every device's state to the same repository
+  root, so a second Pi would overwrite the first one's data.

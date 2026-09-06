@@ -1,60 +1,78 @@
 # What the speaker can do
 
-Everything here is a tool Claude can call. It is given the list with every
-question, picks one if the question needs it, and we run it and hand the
-result back; the person hears one answer and never sees the round trip.
+Twenty-eight tools, in ten modules. Claude is told what they are and picks;
+you never name a tool out loud. This page is what each one does and what it
+needs set up.
 
-For how that works and how to add another, see [tools.md](tools.md).
+Run `python src/tools.py` to print the live list — that is generated from
+the code and cannot go stale.
 
-## What it can do
+| Capability | Needs | Works offline |
+|---|---|---|
+| Answering questions | An Anthropic key | no |
+| Timers and alarms | nothing | yes |
+| Background sounds | nothing | yes |
+| The LED ring | the array | yes |
+| Voice enrolment | nothing | yes |
+| Wishes | nothing | yes |
+| Weather | nothing | no |
+| Web search | `WEB_SEARCH=on` (default) | no |
+| Sound effects | a Freesound key (optional) | no |
+| Books | the book index | no |
+| Music | Spotify Premium | no |
 
-Ask it anything and it answers. Four things it can also *do*, rather than
-just talk about:
+## Answering questions
 
-```
-"hey claude set a timer for ten minutes"
-"hey claude wake me up at seven"
-"hey claude what timers do I have"
-"hey claude what's the weather on Thursday"
-"hey claude who won the game last night"        <- searches the web
-"hey claude play rain until the morning"
-```
+The default and the reason for the rest. `src/brain.py` keeps the last
+`HISTORY_TURNS` exchanges (10) and hands Claude every tool at once, so a
+question can turn into several actions in one breath — "play rain and set a
+timer for twenty minutes" is one turn.
 
-Each of those is a tool. Claude is given the list with every question,
-picks one if the question needs it, and we run it and hand back the result;
-the person hears one answer and never sees the round trip.
+The model is `claude-sonnet-5`. Claude is about two thirds of the silence
+between a question and a reply, so the choice is mostly a latency one:
+measured on the same questions, Opus took 2.85 s, Sonnet 1.52 s and Haiku
+0.87 s, and all three answered the same. Change it with `CLAUDE_MODEL`.
 
-`src/tools.py` is only the framework — collect, describe, run. A tool lives
-next to the code it drives: `timers.py` owns the timer tools, `sounds.py`
-owns the ones that play rain. Adding a capability is a module and a name in
-`FEATURES`; the line in the system prompt telling Claude what the speaker
-can do is generated from the tools, so it can't fall out of step with what
-is actually registered.
+`LOCATION` and `HOUSEHOLD` are both optional and both only make it sound
+less like a stranger — a town makes "how long until it gets dark"
+answerable. Leave them empty if you'd rather not say.
 
-Two things worth knowing:
+Claude is also told to keep quiet when it wasn't being spoken to. With a
+television on, the wake word fires by mistake dozens of times an hour, and
+the speaker answering the television is worse than the speaker missing you.
 
-**Timers ring on their own thread**, which makes them the only part of the
-speaker that talks first. A timer that comes due while somebody is asking
-something waits for the answer to finish. It has to: the microphone array
-is one device, and a chime during the recording gets transcribed as a word
-in the middle of the question.
+## Timers and alarms
 
-**A finished timer rings for thirty seconds**, and says the wake word is
-how you stop it. The ringing is broken into short beeps with two and a half
-second gaps, and the gaps are the point: while the speaker is playing,
-incoming audio is thrown away so it can't hear itself, so a timer that rang
-solidly for half a minute would be deaf for the whole of it. Catching the
-wake word in a gap isn't guaranteed — the wake word wants a two second
-window and only the tail of each gap is clear. The hard guarantee is the
-other end: it always stops itself after `RING_SECONDS`.
+`set_timer`, `set_alarm`, `list_timers`, `cancel_timer`, and `start_mission`
+— a timer with a name a child will take seriously.
 
-**Alarms survive a reboot, timers don't.** Somebody who sets a seven
-o'clock alarm means it. A ten minute timer is about something happening
-right now, and an hour later it's just confusing.
+Say "a minute and a half" and Claude works out 90 seconds itself. Alarms are
+24-hour; with no date they take the next time that clock time comes round.
+Both survive being asked about: "how long is left on the pasta".
 
-### The LED ring
+A ringing timer beeps in bursts with gaps to listen in, so **saying the wake
+word stops it**. `RING_SECONDS` (30) is the backstop for when nobody is in
+the room.
 
-The array has twelve LEDs round it, and they say what the speaker is doing:
+## Background sounds
+
+`play_sound`, `stop_sound`, `what_is_playing`. Seven of them, all synthesised
+as they play rather than looped from a file: `rain`, `ocean`, `fireplace`,
+`fan`, and `white`, `pink` and `brown` noise. Nothing is downloaded and
+nothing repeats.
+
+They run for `SOUND_HOURS` (8) unless somebody says otherwise, and play at
+`SOUND_VOLUME` (0.30) — deliberately quiet, because it is something to fall
+asleep to and the microphone still has to hear you over it.
+
+Anything playing steps aside for a whole turn, not just while the speaker
+talks, so questions aren't recorded over rain.
+
+## The LED ring
+
+Twelve LEDs on the array, showing what the speaker is doing. `LEDS=off`
+turns it dark; `LED_BRIGHTNESS` (40 of 255) is a lamp on a shelf in the
+evening, not a status light in a server room.
 
 | | |
 |---|---|
@@ -63,239 +81,121 @@ The array has twelve LEDs round it, and they say what the speaker is doing:
 | blue, breathing | thinking about it |
 | green | talking back |
 | red, fast | a timer is going off |
+| purple | learning a voice |
 
-Sound can't do this job on its own. The beep says it woke up, but it can't
-keep saying it's *still* listening, and it can't say anything at all while
-you're talking — which is exactly when you want to know.
+The ring going dark on the way out of every turn is deliberate: a speaker
+left glowing blue looks like it is still listening to you.
 
-`src/lights.py` speaks the array's USB protocol directly: a vendor control
-transfer, request 0, wValue the command, wIndex the resource. The whole LED
-interface is five commands, which is a lot less than Seeed's 1.8 MB
-`xvf_host` binary or their 400-line script. The firmware runs the
-animations itself, so a breathing ring costs one USB message rather than a
-thread here redrawing it.
+## Voice enrolment
 
-The array's USB node belongs to root, so this needs a udev rule to work
-without sudo — `./deploy.sh` installs one (the same bargain as the systemd
-user service: hand the thing to a group the user is already in, rather than
-becoming root). Without the rule you get one "Access denied" line and the
-lights stay off; everything else works. That's the rule for this whole
-file, in fact. A voice assistant should not stop working because a light
-didn't.
+`learn_wake_word`. "Hey Claude, learn my voice" — then say the wake word ten
+or so times with a pause between each, while the ring is purple. It refits
+and reloads in seconds.
 
-```
-LEDS=off
-LED_BRIGHTNESS=40
-```
+This is the cure for the speaker missing a particular person, and it needs
+no labelling: the person was asked to say the wake word over and over, so
+every segment is the wake word by construction. It needs at least three
+segments, and any segment that doesn't resemble the others — a cough, a
+door, a sibling shouting — is dropped before fitting.
 
-### Background sounds
+Recordings go in `state/`, not `train/`, because deploy mirrors the project
+directory and would delete them.
 
-```
-"hey claude play rain"
-"hey claude put the ocean on for an hour"
-"hey claude stop"
-```
+## Wishes
 
-Rain, ocean, fireplace, fan, and white, pink and brown noise — up to 24
-hours. **Nothing here is a recording.** Every sound is made as it plays,
-from filtered noise, which is the right answer on a Pi for three reasons:
-no files to download or license, no memory to hold them in, and no seam. A
-looped recording ticks every time it comes round, and a child lying awake
-listening for the tick will find it.
+`make_a_wish`. When somebody asks for something there is no tool for, the
+speaker says plainly that it can't and that it has written it down. Both
+halves matter: a child who is told no stops asking, and asking is the useful
+part.
 
-Two things had to be solved to make this work at all.
-
-**The array plays and listens through one piece of hardware**, and allows
-exactly one stream at a time — so eight hours of rain would otherwise be
-eight hours of a speaker that can't answer. Everything that makes a noise
-wraps itself in `sounds.paused()`, which closes the stream and reopens it
-afterwards, carrying on mid-sound because the filter state is kept. The
-count is kept too, so a beep inside an answer inside a turn nests safely.
-
-**Audio arriving while the speaker talks is normally thrown away**, or it
-wakes itself up. That rule can't apply here or the speaker would be deaf
-all night, so the ambience deliberately doesn't set `tts.speaking` — the
-wake word runs on a microphone that can hear the rain. It works because the
-array cancels its own output in hardware. Measured on the Pi:
-
-```
-                  mic level (median RMS)   highest wake score in 30s
-nothing playing              1454                    0.93
-rain playing                  664                    0.84     (fires at 0.99)
-```
-
-So the rain doesn't trip the wake word, and the room is still audible
-through it. Whether it's audible *enough* to catch "hey claude" from across
-a bedroom is the part only a person can test.
-
-```
-SOUND_VOLUME=0.30
-SOUND_HOURS=8
-```
-
-### Books
-
-```
-"hey claude, read me Treasure Island"
-"hey claude, next chapter"
-"hey claude, stop"
-       ...the next evening...
-"hey claude, read me Treasure Island"    -> carries on from chapter five
-```
-
-**LibriVox first.** Twenty thousand public-domain books read aloud by human
-volunteers, free, no key. For a bedtime story that beats Piper outright — a
-real voice for two hours instead of a very good two-sentence voice stretched
-over a chapter — and it costs the Pi no synthesis at all. Chapters arrive
-pre-split with titles and durations, so "next chapter" is an index lookup.
-Measured on the Pi: 0.99x realtime, with the following chapter fetched
-while the current one plays so the joins are silent.
-
-**Gutenberg second**, for anything nobody has recorded, read by Piper.
-
-Getting at Gutenberg is the awkward part, and worth writing down because
-the obvious routes are all dead:
-
-```
-gutenberg.org book text        503 Service Unavailable
-gutenberg.org pg_catalog.csv   504 Gateway Timeout, after 33s
-gutendex.com                   timeout, twice
-Standard Ebooks OPDS           401 Unauthorized
-Hugging Face /search, /filter  500 Internal Server Error
-```
-
-So the corpus comes from Hugging Face (`sedthh/gutenberg_english`, 48,284
-books, 10.7 GB) and the searching happens here. `train/build_book_index.py`
-keeps a **2.4 MB** local index of every title, author and bookshelf, which
-is cheap because parquet is columnar: reading just the metadata column out
-of a 340 MB file takes 1.7 seconds over HTTP, and 69 seconds for all 37.
-Looking a title up needs no network at all; only the book itself is
-fetched, in one call, in a second or two.
-
-Gutenberg's own `bookshelves` field is what makes "read me a story" work —
-1,323 books on a children's shelf, Alice and Peter Pan and Sleepy Hollow
-among them.
-
-**The place is remembered**, written every ten seconds so a power cut costs
-seconds rather than an evening, and matched loosely on the way back:
-LibriVox files A Tale of Two Cities as "Tale of Two Cities", so an exact
-lookup would find nothing and start the book again from the beginning.
-
-### Music
-
-```
-"hey claude, play Baby Shark"
-"hey claude, skip this one"
-"hey claude, turn the music down a bit"
-"hey claude, stop the music"
-```
-
-Needs **Spotify Premium**: librespot, which does the streaming on the Pi,
-cannot play at all on a free account.
-
-Two halves. `librespot` runs as a user service and makes the Pi a Spotify
-Connect speaker, the same as a Sonos as far as Spotify is concerned — **no
-Spotify password goes near the Pi**; you pick it once in the phone app,
-which is how it gets its credentials, and they are cached after. `music.py`
-is the other half: the Web API, which searches and says what to play where.
-It never touches audio, so an hour of music costs the Pi about as much as
-an hour of silence.
-
-Setting it up: make a free app at
-[developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
-with redirect URI `http://127.0.0.1:8888/callback` (Spotify insists on
-127.0.0.1, not localhost), put the id and secret in `.env`, and run
-`python train/spotify_login.py` once on a machine with a browser. Then
-`./deploy.sh` installs librespot, and you pick "Claude Speaker" in the
-Spotify app once.
-
-**Mixing, rather than taking turns.** Everything else here closes the sound
-device and reopens it, because the array allows one stream at a time. Music
-doesn't have to: `pipewire-alsa` puts PipeWire between the programs and the
-hardware, so the music simply gets quieter while the speaker talks and
-comes back after — Spotify does the ducking on its own side, in one call.
-Installing it had a second benefit nobody was looking for: PortAudio now
-offers the voice's own 22 kHz rate, so answers are no longer resampled to
-the array's 16 kHz on the way out.
-
-Two things measured rather than assumed: Spotify's search `limit` is
-documented as up to 50 and an app in development mode gets 400 "Invalid
-limit" above **ten**; and skipping a track answers 200 with a bare tracking
-id rather than JSON, which is not an error and must not be read as one.
-
-### Web search
-
-Search runs on Anthropic's side, not on the Pi — Claude searches between
-your question going out and the answer coming back, so there's no page
-fetched here and no second round trip to pay for. It costs money per
-search and adds two or three seconds, so Claude is told to use it only
-when the answer really turns on something recent or local. Measured on a
-question that didn't need it, 2.9 seconds; on one that did, 5.0.
-
-Turn it off, or change the ceiling on searches per question, in `.env`:
-
-```
-WEB_SEARCH=off
-WEB_SEARCH_MAX=3
-```
+Read them with `./wishes.sh`. Repeats are folded together and counted.
 
 ## Weather
 
-Set your town in `.env` and it can answer weather questions:
+`get_weather`. Open-Meteo, no key and no account. Today's forecast is
+fetched in the background at startup and put in Claude's notes, so "is it
+cold out" costs no call at all; the tool is for other days.
 
-```
-LOCATION=Palo Alto, California
-```
+Needs `LOCATION` set to be useful.
 
-That's all — the forecast comes from [Open-Meteo](https://open-meteo.com),
-which is free and needs no account or API key. Leave `LOCATION` out and the
-speaker simply doesn't know the weather; nothing is sent anywhere.
+## Web search
 
-It's fetched in the background and cached for fifteen minutes, so asking
-never waits on the network. If the connection is down, it says it doesn't
-know rather than hanging.
+Runs on Anthropic's side, not on the Pi, so it costs no local compute — but
+it costs money per search and adds a few seconds. `WEB_SEARCH=off` disables
+it; `WEB_SEARCH_MAX` (3) caps both the wait and the bill per question.
 
-The point isn't reciting a forecast — it's questions like *"should I wear a
-coat?"*, which it can now actually answer.
+## Sound effects
+
+`find_effect` then `play_effect`. Real recordings, looked up on demand:
+Freesound if `FREESOUND_API_KEY` is set, otherwise Wikimedia Commons, which
+needs no account and is noticeably worse at this.
+
+Searching and playing are deliberately separate. A search match is very
+often the wrong thing with the right word in it — a search for a cow
+returned a 1922 jazz record by Cow Cow Davenport — so Claude reads the names
+before choosing, and says so in words if none of them is the actual sound.
+
+## Books
+
+`find_book`, `play_book`, `stop_reading`, `change_chapter`, `what_book`.
+Two sources, in order:
+
+**LibriVox first** — twenty thousand public-domain books read aloud by human
+volunteers, free and no key. For a bedtime story a real voice for two hours
+beats a very good two-sentence voice stretched over a chapter, and it costs
+the Pi no synthesis at all. Chapters arrive pre-split with titles and
+durations, so "next chapter" is an index.
+
+**Project Gutenberg second**, for the books nobody has recorded, read by
+Piper. Not from gutenberg.org, which answers programs with 503; from the
+copy on Hugging Face, with a 2.4 MB index of all 48,284 titles held locally
+so searching needs no network. Build it with `train/build_book_index.py`.
+
+It remembers where you stopped, per book, and picks up there. As with
+effects, finding and playing are separate, because several recordings of a
+well-known story usually exist at very different lengths, and among them an
+abridgement, a sequel or a parody.
+
+## Music
+
+`find_music`, `play_music`, `pause_music`, `skip_music`, `music_volume`,
+`what_music`.
+
+**Needs Spotify Premium** — librespot, which does the streaming on the Pi,
+cannot play on a free account at all. Set `SPOTIFY_CLIENT_ID` and
+`SPOTIFY_CLIENT_SECRET` from a free app at
+[developer.spotify.com](https://developer.spotify.com/dashboard), then run
+`train/spotify_login.py` once on a machine with a browser for
+`SPOTIFY_REFRESH_TOKEN`. The speaker never sees your password.
+
+`SPOTIFY_DEVICE` (default "Claude Speaker") is what it calls itself in the
+Spotify app's device list.
+
+`music_volume` changes only the music, not how loud the speaker talks.
 
 ## Easter eggs
 
-Not written down anywhere the family can find, which is the point — see
-`src/eggs.py` if you need to know.
+Ten of them, in `src/eggs.py`, from Groot to Mark Rober. They are meant to
+be found by accident, so they are not listed here.
 
-```
-"hey claude, I am Groot"            answers only in Groot, for a few turns
-"hey claude, expecto patronum"      names your patronus, and plays it
-"hey claude, to infinity and…"      finishes the line
-"hey claude, do you want to
- build a snowman"                   answers, then offers to play the song
-"hey claude, hakuna matata"         no worries — and cancels your timers
-"hey claude, flip-o-rama"           a paper flutter, and two frames narrated
-"hey claude, this is the way"       answers in kind, then talks like Mando
-"hey claude, I have spoken"         stops it dead, mid-sentence
-"hey claude, rubble on the double"  starts a timed mission, with a siren
-"hey claude, teach me something"    one fact, and the real sound of it
-```
+`stop_everything` lives there too — talking, reading, music, sounds and a
+ringing timer, all at once. "I have spoken" is one of the ways to say it.
 
-Two rules, from noticing which ones are actually fun.
+## Voice and speech
 
-**The good ones do something.** "This is the way" said back is a nice
-moment. "I have spoken" stopping the speaker mid-sentence is a magic word
-that silences a machine, and a child will remember that for years. "Rubble
-on the double" is a tidying timer with a siren on it, which is a chore
-disguised as a rescue.
+| | on a laptop | on the Pi |
+|---|---|---|
+| Voice | macOS `say`, `VOICE=Samantha` | Piper, `PIPER_VOICE=en_GB-alan-medium` |
+| Recognition | `WHISPER_MODEL=base.en` | `tiny.en` |
 
-**They have to be findable by accident.** Nobody reads a list of easter
-eggs. Somebody says a line they know, something happens, and the speaker
-becomes a place where saying film lines is rewarded.
+`SPEECH_RATE` (180 wpm) means the same on both. `SENTENCE_PAUSE` (0.12 s) is
+Linux only — Piper's own spacing is about a fifth of a second once the
+silence at both ends is counted, which sounds slow read aloud.
 
-The sayable ones are data — a table in `src/eggs.py` that Claude is shown
-along with everything else it knows. The doing ones are two tools,
-`stop_everything` and `start_mission`, plus tools that already existed.
+Stick to a *medium* Piper voice on a Pi 4: medium synthesises 0.32 seconds
+per second of speech, so it talks three times faster than it can be listened
+to, while *high* takes 2.0 and the speaker falls behind its own sentences.
 
-`stop_everything` is worth having on its own: it stops talking, reading,
-music, background sound and a ringing timer, all at once. Speech is now
-cut off between tenth-of-a-second blocks rather than between sentences,
-because a sentence is one to three seconds and being interrupted three
-seconds later is not being interrupted. Measured: stopped at 1.5s into an
-answer that would have run 7.
+`OUTPUT_VOLUME` (100) is applied at startup because USB audio often arrives
+attenuated — the array came set about 20 dB down. Set it blank to leave the
+system mixer alone.

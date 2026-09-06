@@ -1,21 +1,27 @@
-# Putting it on a Raspberry Pi
-
-## Putting it on a Raspberry Pi
+# On a Raspberry Pi
 
 A laptop is a fine place to build this, but a speaker belongs on a shelf.
+
+## Deploying
 
 ```bash
 ./deploy.sh normal@192.168.4.95    # the first time — it remembers the address
 ./deploy.sh                        # every time after that
-./deploy.sh --service              # ...and start it on every boot
+./deploy.sh --run                  # deploy, then start it and watch
+./deploy.sh --service              # deploy, and start it on every boot
+./deploy.sh --no-apt               # skip system packages (no sudo at all)
 ```
 
 It copies the code, installs what the Pi needs, sends your API key over the
 SSH connection into a file only you can read, and downloads the voice. Run
 it as often as you like — it only redoes what changed. The first run takes
-a few minutes; later ones take seconds.
+a few minutes, mostly downloading Python packages; later ones take seconds.
 
-Two settings are rewritten on the way over, because the Pi isn't a Mac:
+The address is remembered in `.deploy-target`, which holds one host. Every
+other laptop command (`./label.sh`, `./relearn.sh`, `./wishes.sh`) reads the
+same file.
+
+Two settings are rewritten on the way over, because the Pi is not a Mac:
 
 | | on the laptop | on the Pi |
 |---|---|---|
@@ -23,73 +29,64 @@ Two settings are rewritten on the way over, because the Pi isn't a Mac:
 | Speech recognition | `base.en` | `tiny.en` — a Pi 4 is slower |
 
 Everything else — your key, your town, the wake word — carries over as is.
-To write the Pi's settings by hand instead, make a `.env.pi` file and that
-gets sent untouched.
+To write the Pi's settings by hand instead, make a `.env.pi` and that is
+sent untouched.
 
-### Starting it, and where it prints to
+System packages installed once: `python3-venv`, `libportaudio2`,
+`libsndfile1`, `espeak-ng`, `alsa-utils`, and the ALSA-to-PipeWire bridge —
+without which the array really does allow one program at a time.
+
+## Running it
 
 ```bash
 cd ~/claude-speaker
 ./start.sh                                    # start it, or restart it
 ./start.sh --status                           # is it running
 ./start.sh --stop                             # stop it
-journalctl --user-unit=claude-speaker -f      # watch what it hears and says
+./start.sh --foreground                       # watch it here, Ctrl-C to stop
+./start.sh --text                             # type questions instead
+journalctl --user-unit=claude-speaker -f      # what it hears and says
 ```
 
-**Everything goes through systemd.** `start.sh` installs the service if the
-machine hasn't got it, and then starts, stops and reports on that — it has
-no other way of running the speaker.
+**Everything goes through systemd.** There is no second way to run the
+speaker, because two of them cannot share a microphone array: playing and
+listening are the same piece of hardware and it allows one stream, so the
+second one fails or quietly steals it from the first.
 
-It used to have one. It would launch `src/main.py` itself under `nohup`,
-writing to `speaker.log`, and then had to detect the service and talk you
-out of using the script:
+`start.py` runs on the system Python and only the standard library, because
+its first job is to build the virtualenv everything else needs.
 
-```
-systemd is looking after the speaker (currently active).
-Use it, or the two will fight over the microphone:
-```
+### The services
 
-That is a script explaining a design rather than doing a job. Two speakers
-genuinely cannot coexist — on a microphone array, playing and listening are
-the same piece of hardware and it allows one stream, so the second one
-fails or quietly steals it — but the answer to that is one way to start it,
-not a warning. The service restarts on failure, comes back at boot, and
-keeps its log in the journal, none of which the loose process did.
+Three, all **user** services, so none of this needs a password.
+`systemctl --user` does not need root, and `loginctl enable-linger` is what
+makes them start at boot with nobody logged in. The speaker has no reason to
+be root — it needs the audio group, which you are already in.
 
-Two other ways to run it, both staying in your terminal:
+| | |
+|---|---|
+| `claude-speaker.service` | the speaker itself; restarts on failure |
+| `librespot.service` | Spotify Connect, if music is set up |
+| `claude-relearn.timer` | retrains the wake word at 04:00 |
 
-```bash
-./start.sh --foreground   # watch it directly, Ctrl-C to stop
-./start.sh --text         # type questions instead of speaking them
-```
+The timer has `RandomizedDelaySec=15m` and `Persistent=true`, so it jitters
+and a Pi that was switched off catches up. See
+[docs/wake-word.md](wake-word.md).
 
-`./deploy.sh` restarts a running speaker for you, so deployed code actually
-takes effect. For it to come back after a power cut, install it as a
-service:
+librespot is installed as this user's own service rather than the system one
+that ships with it. No Spotify password goes anywhere near the Pi —
+librespot advertises itself and the phone hands it a token.
 
-```bash
-./deploy.sh --service
-ssh you@your-pi journalctl --user-unit=claude-speaker -f
-ssh you@your-pi systemctl --user restart claude-speaker
-```
+`./deploy.sh` restarts a running speaker for you, so deployed code takes
+effect.
 
-It's a **user** service, not a system one, so none of this needs a
-password. `systemctl --user` doesn't need root, and `loginctl
-enable-linger` — which you can also run for yourself — is what makes it
-start at boot with nobody logged in. The speaker has no reason to be root:
-it needs the audio group, which you're already in.
+## The microphone array
 
-The only thing that ever wants `sudo` is installing system packages on a
-brand new Pi, which happens once. `./deploy.sh --no-apt` skips even that.
+A **reSpeaker XVF3800 4-Mic Array**. It captures at 16 kHz, which is exactly
+what the wake word and Whisper both want, so nothing is resampled on the way
+in, and it does beamforming and echo cancellation on its own chip.
 
-### The microphone array
-
-The Pi in this project uses a **reSpeaker XVF3800 4-Mic Array**, which suits
-it well: it captures at 16 kHz, which is exactly the rate the wake word and
-Whisper both want, so nothing is resampled on the way in. It also does
-beamforming and echo cancellation on its own chip.
-
-It's a speaker as well as a microphone. If your speakers are wired into the
+It is a speaker as well as a microphone. If your speakers are wired into the
 array rather than the Pi's headphone socket, use it for both:
 
 ```
@@ -97,90 +94,79 @@ INPUT_DEVICE=
 OUTPUT_DEVICE=Array
 ```
 
-That's worth doing — the array cancels its own output in hardware, so it
-genuinely doesn't hear Claude talking.
+Worth doing: the array cancels its own output in hardware, so it genuinely
+does not hear Claude talking.
 
-It also arrives **turned down about 20 dB** — `PCM Playback Volume` set to
-37 of 60, on a scale where 60 is 0 dB. That's quiet enough to read as a
-broken speaker rather than a quiet one, and no amount of software gain
-fixes it, because Piper already peaks at full scale. So the speaker sets
-its own volume at every startup:
+The catch is that it only accepts 16 kHz, and Piper's voices come out at
+22.05 kHz, so `tts.py` resamples on the way out. And because it is one piece
+of hardware, only one stream can be open at a time — which is why `tts.py`
+closes the device after every sound rather than leaving a player running.
+
+Plug it into a **blue USB 3.0 port**. On a Pi 4 the black USB 2 sockets can
+enumerate the array fine and then refuse to stream from it.
+
+### Two volume controls
+
+The array arrives attenuated — `PCM Playback Volume` at 37 of 60, on a scale
+where 60 is 0 dB — and PipeWire puts a second gain stage in front of it,
+which sits at 0.40 by default. Together that is about 31 dB down, roughly
+thirty-five times quieter, and no amount of software gain fixes it because
+Piper already peaks at full scale.
+
+So `turn_up()` sets both at every startup, asking PipeWire which card the
+output actually lands on. It happens at startup rather than at install
+because mixer levels do not reliably survive a reboot, and a speaker that
+goes quiet when the power blinks is worse than one that was never loud.
 
 ```
-OUTPUT_VOLUME=100
+OUTPUT_VOLUME=100     # turn it down for the evening, or blank to not touch it
 ```
 
-It happens at startup rather than at install time because mixer levels
-don't reliably survive a reboot. Turn it down if it's too much at night, or
-leave it blank to not touch the system mixer at all. The catch is that it only accepts
-16 kHz, and Piper's voices come out at 22.05 kHz, so `tts.py` resamples on
-the way out. Two things follow from it being one piece of hardware: only
-one stream can be open at a time, which is why `tts.py` closes the device
-after every sound rather than leaving a player running.
-
-### The voice on the Pi
+## The voice
 
 macOS has `say` built in; Linux has nothing, so the Pi speaks with
-[Piper](https://rhasspy.github.io/piper-samples/) — a small neural voice
-that runs locally, like everything else here.
+[Piper](https://rhasspy.github.io/piper-samples/), a small neural voice that
+runs locally like everything else here.
 
-Measured on this Pi 4, synthesising a two-sentence answer:
+Measured on this Pi 4, per second of speech synthesised:
 
-| voice | compute per second of speech |
+| voice | cost |
 |---|---|
-| `en_GB-alan-medium` | 0.31x — three times faster than real time |
-| `en_US-ryan-medium` | 0.32x |
-| `en_US-ryan-high` | 2.0x — slower than talking, so don't |
+| `en_GB-alan-medium` | 0.31× — three times faster than real time |
+| `en_US-ryan-medium` | 0.32× |
+| `en_US-ryan-high` | 2.0× — slower than talking, so don't |
 
-Stick to a **medium** voice. Loading one takes about five seconds, so it's
-loaded once at startup and kept, not reloaded per answer.
+**Stick to a medium voice.** Loading one takes about five seconds, so it is
+loaded at startup and kept, not reloaded per answer.
 
-The bigger expressive models — Chatterbox and its kind — can't go here at
-all: over 3 GB of weights against the Pi's 3.8 GB of memory, before Python
-has even started, and minutes per sentence on four Arm cores.
+The bigger expressive models cannot go here at all: over 3 GB of weights
+against the Pi's 3.8 GB of memory, before Python has started, and minutes
+per sentence on four Arm cores.
 
-Pick a different one with `PIPER_VOICE` in `.env`, and choose which socket
-the sound comes out of with `OUTPUT_DEVICE`:
+Piper makes one chunk per sentence, and on a Pi each takes about six tenths
+of a second — half as long as the sentence lasts. One thread makes the sound
+and another plays it, so the next sentence is ready before the current one
+ends: 4.13 s against 4.95 s for a three-sentence answer. The silence Piper
+leaves at both ends of a chunk is trimmed and replaced with `SENTENCE_PAUSE`
+(0.12 s), so the spacing is a choice.
 
 ```bash
 python src/tts.py --devices     # lists the speakers it can see
 ```
 
-That last one matters on a Pi: ALSA lists the HDMI outputs first, so the
-default is often a monitor rather than your actual speakers.
+Worth checking on a Pi: ALSA lists the HDMI outputs first, so the default is
+often a monitor with no speakers.
 
+## What it uses
 
-**The pause between sentences.** Piper makes one chunk per sentence, and on
-a Pi each takes about six tenths of a second to make — half as long as the
-sentence lasts. Written straight to the sound device that time is dead air,
-because `stream.write()` blocks until the audio has played out, so nothing
-is being synthesised while anything is being said. That was the long pause
-after every full stop: not the voice taking a breath, the Pi thinking.
+Measured over nearly five hours on a Pi 4:
 
-One thread now makes the sound and another plays it, so the next sentence
-is ready well before the current one ends. The silence Piper leaves at both
-ends of a chunk is trimmed and replaced with a gap you choose. Measured on
-the Pi, a three sentence answer:
+| | |
+|---|---|
+| the speaker, peak | 679 MB |
+| whole system, with a desktop running | 897 MB |
+| a retraining run, peak | 232 MB |
+| the wake word | about a quarter of one core |
 
-```
-write-as-you-go   4.95s
-thread ahead      4.13s
-```
-
-```
-SENTENCE_PAUSE=0.12
-```
-
-**Two volume controls, not one.** The array arrives attenuated — 37 of 60,
-where 60 is 0 dB — and since PipeWire went in there is a second gain stage
-in front of it, which sits at 0.40 by default. `turn_up()` sets both at
-every startup, because neither reliably survives a reboot and a speaker
-that goes quiet when the power blinks is worse than one that was never
-loud.
-
-That was a bug for a while. `OUTPUT_DEVICE` is `pipewire` now, which
-appears in no `aplay -l` line, so the code that found the card to turn up
-quietly returned nothing and stopped turning anything up. The array
-reverted to 37 of 60 and PipeWire held its sink at 0.40 — together 31 dB
-down, about thirty five times quieter. It asks PipeWire which card its
-output actually lands on now.
+It fits in 2 GB with room to spare. 4 GB is worth having for deploy headroom
+and for anything you fine-tune later, not for the steady state.

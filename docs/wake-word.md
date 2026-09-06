@@ -1,624 +1,293 @@
 # The wake word
 
-The hardest part of this project, by a distance, and the part with the most
-measurements attached. This is the whole story: why the obvious library
-didn't work, what replaced it, where to put the threshold, an idea that
-looked good and wasn't, and how the speaker learns from its own mistakes.
+How the speaker hears its name, and how it gets better at it.
 
-## About the wake word
+    two seconds of audio
+        -> Whisper tiny.en encoder      768 numbers
+        -> logistic regression          one score, 0 to 1
+        -> over the line?               wake up
 
-The speaker listens for **"hey Claude"** using `models/hey_claude_whisper.npz`
-— a classifier on top of Whisper's encoder. Set in `.env`:
+## What it is
 
-```
-WAKE_MODEL=hey_claude_whisper.npz
-WAKE_THRESHOLD=0.99
-```
+A logistic regression on the output of Whisper's `tiny.en` encoder, mean and
+max pooled over the first 100 frames of a two-second window. The encoder is
+frozen and does the hearing; the regression is the only part that is
+trained, and it is 768 weights and a standardiser in an `.npz`.
+
+That means the speaker needs numpy and Whisper to run the wake word, and
+scikit-learn only to fit one.
+
+The window is scored every `WAKE_STRIDE_SECONDS` (0.4). The phrase is under
+a second, so it falls inside several consecutive windows and does not have
+to be caught the first time.
+
+### What it costs
+
+131 ms per two-second window on a Pi 4 — 0.26× realtime, about a quarter of
+one core, leaving three for Whisper and the voice.
 
 ### Why not openWakeWord
 
-The project started with [openWakeWord](https://github.com/dscripka/openWakeWord),
-and there's a trained model here for it (`models/hey_claude.onnx`, also on
-the Hub as [gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude)).
-It scores 0.99 on the synthetic speech it was trained on. On real people it
-scored **0.001**, and woke on 7 recordings out of 80.
+`wake.py` still supports it, and `WAKE_MODE=openwakeword` selects it. It is
+cheaper — 13 ms per 80 ms chunk, 0.16× realtime — but on this data it tops
+out around **59% recall at 127 false wakes an hour**, against about 90%
+recall at no measurable false wakes for the encoder.
 
-Recording 80 real utterances from four people fixed that — 9% to 80% — and
-broke false wakes instead: about 180 an hour on the real microphone.
-Recording 40 minutes of the actual room cut that twelvefold. Widening the
-head from 32 to 96 units lifted the whole curve. None of it broke the
-underlying problem, which was that recall and false wakes moved together at
-every threshold: the model was sliding one operating point rather than
-telling two things apart.
+The reason is where the compute sits. openWakeWord is a mel filterbank into
+a frozen 0.33M-parameter CNN from 2020 with a small head on top. On this Pi
+the CNN is 91% of the cost, the head is 1% — and the head is the only part
+anyone can train. Everything tunable is 1% of the compute, so when the
+frozen features don't separate the classes, nothing done above them helps.
 
-The reason is in the shape of the thing. openWakeWord is a mel filterbank,
-a **frozen 0.33M parameter CNN from 2020**, and a small head you train.
-Measured on this Pi:
+`WAKE_MODE=key` is the third option: press Enter instead. Always works, no
+setup, useful while sorting something else out.
 
-| stage | per 80 ms chunk | share |
-|---|---|---|
-| melspectrogram | 0.95 ms | 7% |
-| frozen embedding CNN | 11.75 ms | **91%** |
-| the head you train | 0.18 ms | **1%** |
+## What gets written down
 
-Everything tunable is 1% of the compute. If the frozen 91% doesn't
-distinguish your family saying "hey Claude" from your family saying
-anything else, nothing on top can recover it — and it doesn't.
+Every firing, and every near miss, goes in `state/wakes/`. This is what
+makes the speaker able to learn from its own mistakes without anybody
+recording anything.
 
-### Whisper's encoder instead
+| | |
+|---|---|
+| the 768 numbers | the vector that was scored. **Free** — the encoder pass that produced it is what fired the wake word. 1.5 kB, kept forever |
+| the two seconds | the audio, so a person can listen and so features can be recomputed if the encoder changes. 64 kB, so only the most recent `WAKE_LOG_CLIPS` (1500) are kept |
+| what happened next | what Whisper heard, and whether Claude thought it was being spoken to. Written after the turn, because that is when it is known |
 
-Whisper's `tiny.en` encoder was trained on a great deal more speech. Feed it
-a two second window, keep the first 100 frames, mean and max pool, and put
-a logistic regression on top. Same recordings, same room:
+The last of those is the valuable one. A firing followed by silence is
+almost certainly a mistake; one followed by a question that got answered is
+almost certainly real. The speaker works both out anyway in the course of
+answering.
 
-| | openWakeWord, best | **Whisper encoder** |
-|---|---|---|
-| recall at ~55 false wakes/hr | 42% | **84%** |
-| recall at ~125 false wakes/hr | 59% | **91%** |
-| cost on a Pi 4 | 0.16x realtime | 0.42x realtime |
+### Near misses
 
-Double the recall for two and a half times the compute, which a Pi 4 has to
-spare — about 10% of the machine, leaving three cores for Whisper and the
-voice. The trained part is 11 kB.
+Logging only what fires teaches the speaker nothing about recall, which is
+the weaker half — held out entirely, it catches about half of one child's
+attempts. The times somebody said "hey Claude" and nothing happened are
+exactly what would fix that, and they never fire, so they would never be
+logged.
 
-Two lessons are baked into `train/train_whisper_wake.py`, both learned the
-hard way:
+So windows scoring above `WAKE_NEAR` (0.5) are held in memory for
+`WAKE_NEAR_SECONDS` (15), and when a firing does happen the ones just before
+it are written down too. A near miss followed within `WAKE_REPEAT_SECONDS`
+(4) by a real firing is somebody saying it again because the first go was
+missed — a labelled recall failure that nobody had to label.
 
-- **Negatives must include speech that isn't the wake word.** Trained
-  against room noise alone it reached 94% recall and zero false wakes —
-  by learning "somebody is talking". It fired on 86% of other spoken
-  phrases.
-- **Score it the way it runs.** Isolated clips gave 0 false wakes; sliding
-  a window over the same audio continuously gave 391 an hour. A streaming
-  detector has to be measured streaming.
+A slower trickle, one every `WAKE_NEAR_EVERY` (180 s), catches the attempts
+that were never followed by success because whoever it was gave up.
 
-### Making your own
+Nothing in the logging may slow a turn down or break one. Every call is
+wrapped: a full disk costs you the log, not the speaker.
+
+## Labelling
+
+`train/label_wakes.py` turns the pile into labelled data, using three things
+in order of what they cost:
+
+**1. What happened next.** Free, and the most reliable thing here. Nothing
+said → almost certainly a mistake. A question that got answered → almost
+certainly real. For a near miss, the equivalent is repetition.
+
+**2. What Whisper makes of the two seconds — in one direction only.**
+Against 80 real recordings, `tiny.en` transcribes the wake word 5% of the
+time and `base.en` 16%. It hears "It's hot", "Take that", "Great class" —
+the right rhythm and roughly the right vowels, overruled by a language model
+for which "Claude" is rare and "take that" is common.
+
+So a window that *does* say Claude is strong evidence it was real, and one
+that doesn't is no evidence at all. What the transcript is genuinely good
+for is the opposite case: Whisper handles ordinary English perfectly well,
+so a window that comes out as a fluent sentence of television is evidence
+the speaker was not being spoken to.
+
+**3. Claude**, for the ones still in doubt, told plainly how unreliable the
+window transcript is so it doesn't make the same mistake.
+
+Nothing is thrown away and nothing is overwritten. Labels are appended to
+the same log, so a bad run can be relabelled and the audio is still there to
+listen to.
+
+### A person listening
+
+`./label.sh` fetches the clips to the laptop, opens a page, and plays them
+one at a time: **y** if that really was somebody saying the wake word, **n**
+if it wasn't. Answers go back to the Pi.
+
+This matters because the automatic labels are good at the easy half and
+guess at the hard half, and the guesses are worth `BY_PERSON` = 5× less than
+a person's in the fit. Thirty clips takes five minutes.
+
+Nothing runs on the Pi and there is nothing to install; the clips are copied
+down and served from the laptop.
+
+## Retraining
 
 ```bash
-python train/record_wake.py --speaker greg,ojas,tejas,ana --times 20
-python train/record_room.py --minutes 30 --label tv
-python train/train_whisper_wake.py
+./relearn.sh              # label today's firings, refit, keep if better
+./relearn.sh --dry        # say what would change, change nothing
+./relearn.sh --force      # take the new model even if it isn't better
+./relearn.sh --log        # what the timer did on its own, last time
 ```
 
-Record on the machine the speaker lives on, through its microphone. Twenty
-utterances each from four people and forty minutes of room is enough. Say
-it varied — closer, further, mumbled — and record the room at its noisiest,
-television included. Then check it:
-
-```bash
-python train/test_wake.py models/hey_claude_whisper.npz --times 6
-python train/test_silence.py models/hey_claude.onnx --seconds 180
-```
-
-**The openWakeWord models are still here** — `models/hey_claude.onnx` (also
-on the Hub as [gdiamos/hey-claude](https://huggingface.co/gdiamos/hey-claude))
-and `models/hey_claude-96.onnx`, the best one this project produced. Either
-still loads if you set `WAKE_MODEL` to it. The pipeline that trained them —
-5 GB of downloads, 80 minutes, and 2,200 lines — was removed once the
-Whisper wake word beat it on every measurement. It's in the git history if
-you want it back.
-
-Other options, both in `.env`:
-
-```
-WAKE_MODEL=alexa      # openWakeWord's built-ins: hey_jarvis, alexa, hey_mycroft
-WAKE_MODE=key         # skip the wake word — press Enter to talk instead
-```
-
-## Where to put the threshold
-
-Held out entirely, the wake word catches 52% of one child's attempts, and
-that number moves a lot with the threshold:
-
-```
- threshold   recall, unseen voice   recall, known voices   room false/hr
-     0.50            66%                   100%                 0.0
-     0.80            55%                   100%                 0.0
-     0.90            52%                    94%                 0.0
-     0.99            38%                    58%                 0.0
-```
-
-It shipped at 0.99, which was throwing away nearly half the recall for
-nothing measurable. It is 0.80 now. Two caveats on that table: the room
-negatives were hard-mined against this same model, so `0.0/hr` is
-optimistic — the real room gave about forty an hour at 0.99 — and the
-"known voices" column is partly memorisation. The held-out column is the
-honest one, and the shape is the point.
-
-What makes a low threshold affordable is that a false wake is now silent.
-It used to apologise out loud to an empty room; now nothing said means
-nothing spoken, and television speech gets `(nothing)` back from Claude. A
-false wake costs a flash of the LED ring and some CPU.
-
-### Why there's no second-stage verifier
-
-The obvious idea is to propose at a low threshold and confirm with a
-stronger model. It doesn't work, and the way it fails is worth writing
-down.
-
-Whisper cannot transcribe the wake word at all. Against 80 real recordings
-of four people saying "hey Claude":
-
-```
-tiny.en   4/80 =  5%
-base.en  13/80 = 16%
-```
-
-It hears "It's hot", "Take that", "Great class", "Thank God" — all the
-right rhythm and roughly the right vowels. The acoustics are fine and the
-language model overrules them, because "Claude" is rare and "take that" is
-common.
-
-Biasing the decoder with `initial_prompt="Hey Claude."` takes tiny.en from
-0% to 97%, and makes it three times faster. It also makes it say "Hey
-Claude" on **58% of room noise and 55% of ordinary speech**. It isn't
-recognising the phrase, it's repeating the prompt. `hotwords="Claude"` is
-weaker in both directions, 63% on real ones, and not worth it either.
-
-Which is a decent independent argument that the 768-number classifier is
-doing real work a general speech model won't do for free.
-
-## Teaching it your voice
-
-```
-"hey claude, I want to teach you what my voice sounds like"
-"Say hey Claude about ten times while the light is purple, with a
- pause between each, and it'll go out when I've got enough."
-"hey claude ... hey claude ... hey claude ..."
-"Got eight. Give me a moment to learn them."
-```
-
-Nobody labels anything. The person was asked to repeat the wake word, so
-every segment is the wake word by construction. That is the whole trick,
-and it's the only cure for recall that doesn't involve sitting down with a
-laptop and `record_wake.py`.
-
-**The ring is the interface.** A spoken "stop when you're done" would be
-recorded along with the repetitions, so the light has to carry it: purple
-while listening, out when it has enough.
-
-**It has to be able to reject rubbish**, since it is about to train on
-whatever it heard. Each segment becomes the same 768 numbers the detector
-scores, and anything that doesn't resemble the others is dropped — a
-cough, a chair, a sibling shouting. That comparison must be made on
-*standardised* vectors. Raw Whisper features share a large common
-component and everything looks alike: a burst of noise scored 0.905
-against real repetitions' 0.965, which is not a gap you can cut on.
-Subtract the model's own mean and divide by its scale, and the same burst
-falls to 0.09 against 0.62–0.81.
-
-What it must *not* do is filter on the wake score. The repetitions worth
-learning from are exactly the ones the model currently misses — two of
-seven in testing scored 0.42 and 0.01 — so scoring them would keep only
-what already works.
-
-**Each repetition is then slid around the window**, six times, using the
-pauses between the repetitions as room noise. The recording brings its own
-backgrounds, which means this works on a machine with no room-noise
-library. Measured on a voice the model had never met:
-
-```
-never met them             55% recall at threshold 0.8
-8 recordings as they came  59%
-8 placed at 6 offsets      64%
-```
-
-with no change in false wakes. That is the honest size of it: a few points
-of recall, not a transformation. The features are frozen, and 48 new
-examples against a bank of 2708 can only move a linear model so far. It
-stacks with the threshold, which is the bigger lever.
-
-Then it refits (under a second) and reloads the four small arrays without
-touching the 56 MB encoder, so it takes effect while you're standing
-there.
-
-## Learning from its own mistakes
-
-The wake word is wrong about forty times an hour with a television on, and
-every one of those is a labelled training example nobody had to record. The
-speaker keeps them.
-
-```
-python src/wake_log.py         what has fired, and how those turns went
-python train/label_wakes.py    decide which were real
-python train/relearn.py        fit a new model on them
-```
-
-**The vector is free.** When the wake word fires, the detector has just
-turned two seconds of audio into 768 numbers — that encoder pass is 159 ms
-on a Pi and is the entire cost of the wake word. Those numbers are what
-retraining needs, so they are written down (1.5 kB) along with the audio
-(64 kB, most recent 400 only, because this is an SD card).
-
-**The label is nearly free too.** A firing followed by silence is almost
-certainly a mistake; one followed by a question that got answered is almost
-certainly real. The speaker works both of those out anyway while answering.
-
-**The judge is better than the thing being judged.** `label_wakes.py`
-transcribes the two seconds that fired with a *bigger* Whisper than the Pi
-listens with — `small.en` against `tiny.en`, beam 5 against beam 1 — on a
-laptop, with nothing waiting on it. If the window transcribes to something
-that sounds like "hey Claude", it was real. Only what's left over goes to
-Claude, in batches of twenty, with both transcripts and the time of day.
-
-Claude cannot listen to the clip itself. The API takes text, images and
-PDFs and rejects audio outright — tested, not assumed — so a transcript is
-the way in, which is why it's worth making a good one.
-
-**Retraining costs a second.** Not twenty minutes, because it never touches
-audio: it joins the feature bank `train_whisper_wake.py` saved with the
-logged vectors and fits. Measured on a Pi 4:
-
-```
-logistic regression, 30,000 x 768   0.67s
-the same features from audio        159ms each, about 20 minutes
-```
-
-So the whole loop can run on the Pi, overnight, on data the Pi collected.
-Logged examples are weighted above bank ones (`--weight 3`) because the
-bank is a general model of the world and the log is the actual room.
-
-`relearn.py` prints how the old and new models score on the logged firings
-before writing anything, keeps the model it replaced as `.npz.previous`,
-and `--dry` writes nothing at all.
-
-```
-WAKE_LOG=off
-WAKE_LOG_CLIPS=400
-```
-
-## Listening to it yourself
-
-```
-./label.sh
-```
-
-Fetches the clips off the Pi, opens a page in your browser, and plays them
-one at a time. **y** if that really was somebody saying the wake word, **n**
-if it wasn't, **space** to hear it again. Your answers go back to the Pi and
-are what the nightly retraining learns from — appended after the automatic
-ones, so they win.
-
-Nothing to install and nothing runs on the Pi: it copies the clips down,
-serves them from your laptop on a free port, and appends your answers when
-you stop.
-
-When you stop, it says what you found:
-
-```
-Saved 60 answers to the Pi: 8 yes, 52 no.
-  23 yes and 300 no altogether.
-  8 more examples of somebody actually being heard — those are the ones
-  the retraining measures recall against.
-```
-
-The yes answers are the scarce half and the number worth watching. The
-first two hundred labels here were 202 no and 1 yes, which measures false
-wakes perfectly and says nothing about whether the speaker hears anybody.
-
-It picks the firings the machine could not label by itself, because those
-are the ones it will be fitted on either way, then near misses somebody
-repeated seconds later, which are the recall failures and cannot be found
-any other way. Sixty at a time; `--all` for the lot.
-
-**Then it shuffles them**, and mixes in about one in six clips that really
-are the wake word. Sorted by kind you get a run of twenty television clips
-and start answering "no" without listening, which is worse than not
-labelling at all. The known ones do two jobs: they tell somebody who has
-never done this what a real wake word sounds like through this array — not
-obvious, since it compresses hard and a real one can be quieter than a
-television — and afterwards they say whether the answers can be trusted.
-They have negative numbers and are never sent to the Pi.
-
-Two things had to be fixed before any of it worked. Clips are turned up on
-the way out, because they come off the Pi at about sixteen decibels below
-full scale and through laptop speakers that is indistinguishable from
-nothing playing. And the first one waits for a click: browsers refuse to
-play sound before you have interacted with the page, and refuse silently,
-which looks exactly like a broken audio player.
-
-## Nightly retraining, and why it can refuse
-
-```
-./relearn.sh          learn from today, now
-./relearn.sh --dry    say what would change, change nothing
-./relearn.sh --log    what the timer did on its own last night
-```
-
-A user systemd timer runs the same thing at four in the morning —
-`Persistent=true`, so a Pi that was off does it when it next comes up
-rather than losing the day. It labels with the free signals only; a nightly
-job that needs the network and costs money is one that fails quietly for a
-month.
-
-**It only keeps the new model if the new model is better**, and this is not
-a formality. Comparing before and after on the examples just fitted says
-only that the fit converged — it said 100% and 0% the first night, and the
-room went on waking the speaker every twenty seconds. A model can memorise
-thirty-four clips of one evening's television and learn nothing whatever
-about television.
-
-So the clips a person listened to are held out, and every one of them is
-scored by a model that was fitted without it — in five folds, so no row is
-ever both trained on and tested on. The first honest measurement on this
-speaker:
-
-```
-on 67 firings held back from the fitting:
-  before  catches 93% of the real ones, and still fires on  0.0% of the mistakes
-  after   catches 85% of the real ones, and still fires on 42.9% of the mistakes
-```
-
-The retrained model would have been much worse, and the gate refused it.
-That is the number to watch, and the reason `./label.sh` exists: the
-automatic labels are good at the easy half and guess at the hard half.
-
-### Both sides, the same question
-
-There is a second way to rig this, and it took longer to find. The
-challenger is scored on rows held out of its fitting. The incumbent is the
-model already running — and it was fitted on everything labelled at the
-time, which is nearly all of those same rows. So one side sat an exam and
-the other marked its own homework.
-
-It does not look like a bug. It looks like the running model being very
-good:
-
-```
-                          appears        actually
-  catches                     96%             86%
-  fires on                     1%            4.1%
-```
-
-Both columns are the same weights on the same clips. The left is memory.
-Nothing ever beat it, so nothing was ever promoted, and a learning loop
-that cannot promote is a pipeline.
-
-When the incumbent has seen the test set, it is therefore **rebuilt rather
-than loaded**: the same recipe, the same folds, fitted only on the log as
-it stood when the running model was fitted. That asks the question the gate
-is actually for — *is the new data worth having* — and asks it of both
-sides identically.
-
-Holding out all the human labels at once is not good enough either. The
-model being judged would then be one that has never seen a human label,
-which is not the model that ships and does not sit on the same scale, so
-the threshold swept from it would not fit the weights it gets saved beside
-— 74% caught for the deprived version against 86% for the real one. Folds
-give each model four fifths of them, which is near enough.
-
-### How much television a child is worth
-
-`WAKE_FALSE_BUDGET` is the one number in the retraining that is a judgement
-rather than a measurement: the fraction of known mistakes the chosen
-threshold is allowed to still fire on. The sweep buys as much recall as
-that allows and prints the whole curve beside its choice.
-
-It was 0.15, on the argument that a false wake is nearly silent — nothing
-said, nothing answered, a flash of the ring. That argument was made without
-measuring how often it happens: **sixteen firings an hour with the
-television on, fourteen of them with nobody talking.** A budget is a rate
-times an exposure, and the exposure was large. Measured leak-free on 443
-hand labels:
+A systemd timer runs the same thing at 04:00 nightly, with 15 minutes of
+jitter and `Persistent=true` so a Pi that was off catches up.
+
+It never touches audio. Turning audio into features is the expensive part —
+159 ms per window, twenty minutes for the whole set — so instead it joins
+two piles of features that already exist: **the bank** that
+`train_whisper_wake.py` embedded, saved beside the model, and **the log**,
+whose vectors cost nothing because the encoder pass that made them is what
+fired the wake word.
+
+Fitting on those is a second's work. That is the whole reason this can run
+on the Pi itself, overnight, on data the Pi collected, with no laptop
+involved.
+
+### The gate
+
+A model that measures worse than the one it would replace is not kept. A
+fifth of the labelled firings are held back, the candidate is fitted without
+them, and both models are asked about those. `SLACK` (0.05) allows a
+candidate to be slightly worse and still be taken, because these are small
+samples and being the same within noise is not a reason to refuse.
+
+Below `LEAST_TO_JUDGE` (25) labelled firings there is nothing to hold back
+and the new model is taken on trust — it can only be the bank plus a
+handful. A recall figure needs at least `ENOUGH_POSITIVES` (8) positives to
+mean anything; with one, recall is 0% or 100% and nothing between.
+
+The model being replaced is always kept as `.npz.previous`, whether the gate
+passed or `--force` overrode it.
+
+### Regularisation
+
+`WAKE_FIT_C` (0.001) is how hard the fit is held back — smaller means more
+regularisation. 768 features against a few thousand rows is a great deal of
+room to overfit. Measured by five-fold cross-validation, at the strictest
+threshold that still fires on no more than a tenth of known mistakes:
+
+| C | catches | of the ones said to it |
+|---|---|---|
+| 1.0 | 75% | 62% |
+| 0.1 | 85% | 79% |
+| 0.01 | 95% | 90% |
+| **0.001** | **99%** | **97%** |
+
+Weighting the human labels 1×, 5× or 20× moved nothing by comparison, and a
+small neural net in place of the regression matched `C=0.001` without
+beating it.
+
+### Where the line goes
+
+The fit sweeps thresholds from 0.30 to 0.999 and keeps the one it chose
+inside the model file, so a fitted model carries its own operating point.
+Setting `WAKE_THRESHOLD` in `.env` overrides that; leaving it unset lets the
+model use what its sweep picked.
+
+`WAKE_FALSE_BUDGET` (0.05) caps how much firing on the room the chosen
+threshold may cost, as a fraction of the mistakes a person has labelled.
+**This is the one number in the retraining that is a judgement rather than a
+measurement** — how much television is worth how much of a child being heard
+— so it is a setting, and the sweep prints the whole curve beside its choice
+so the judgement can be checked.
+
+Measured leak-free on 443 hand labels:
 
 | budget | line | catches | fires on |
-|--------|------|---------|----------|
+|---|---|---|---|
 | 15% | 0.400 | 97% | 14.8% |
 | **5%** | **0.630** | **91%** | **4.4%** |
 | 2% | 0.780 | 80% | 1.8% |
 
-It is 0.05 now: nine tenths of the recall for a third of the mistakes.
+Five per cent keeps nine tenths of the recall for a third of the mistakes.
+A false wake is nearly silent — nothing is said, nothing is answered, it
+costs a flash of the ring — but a budget is a rate times an exposure, and
+the exposure is large: sixteen firings an hour in this room with the
+television on, fourteen of them with nobody talking.
 
-## Where the data lives
+## Teaching it a voice
 
-One dataset version per model, and the model says which one.
+"Hey Claude, learn my voice", then say the wake word about ten times with a
+pause between each while the ring is purple. It refits and reloads in
+seconds.
 
-```
-data committed   ->  model fitted   ->  uploaded as
-                     carrying that      models/2026-08-23-a1b2c3d4.npz
-                     commit's sha
-```
+This is the cure for the speaker missing a particular person, and it is the
+only one — the fix for poor recall on a child is more recordings of that
+child. Nobody labels anything: the person was asked to say the wake word
+over and over, so every segment is the wake word by construction.
 
-There is no backup button; `train/relearn.py` does it every time it
-retrains. The data is committed *before* the fitting, so the sha names
-exactly what the model was trained on rather than whatever the log looked
-like once fitting finished. The sha goes inside the `.npz` as `dataset`,
-and the speaker prints it at startup:
+Two guards. It needs at least three segments or the recording is thrown away
+rather than half-learned. And each segment is turned into the same 768
+numbers the detector scores, with any that doesn't resemble the others
+dropped — a cough, a door, a sibling shouting are all outliers among ten
+repetitions of one phrase.
 
-```
-Loading the wake word from hey_claude_whisper.npz (whisper tiny.en)
-  fitted 2026-08-23T19:20 on 1196 logged examples, dataset a1b2c3d4
-```
+Recordings go in `state/`, not `train/`, because deploy mirrors the project
+directory and would delete them.
 
-That is the difference between "the wake word got worse last week" being
-answerable and not.
+## Measuring it honestly
 
-It goes to a Hugging Face dataset repo, which is a git repository with
-large-file storage behind it — so every retraining is a commit, and you can
-go back to exactly the data behind a particular model. A `metadata.csv`
-goes with it, one row per firing lined up with its recording, so the whole
-thing is browsable in a page.
-
-This also fixes something quietly wrong: the Pi keeps only the most recent
-few hundred recordings, so the audio behind labels already given was being
-deleted to make room. Archived, they are all kept.
-
-**Private, and nothing here can make it public.** The recordings in
-`train/real/` are four people who sat down and said "hey Claude" on
-purpose. This is two second windows of a living room caught whenever the
-detector fired — dozens an hour with a television on — containing whatever
-was being said by whoever was in the room. Nobody chose to record most of
-it.
-
-Needs `HF_TOKEN` in `.env`, from
-[huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). A
-fine-grained token with write access to that one repository is enough, and
-is what to use — this is a token sitting on a device in a living room.
-Without it, retraining still works and simply says nothing is archived.
-
-### What the gate judges on
-
-Two kinds of label a person can vouch for, and they are both used:
-
-- **Somebody listened to the clip** and said what it was (`./label.sh`).
-- **Somebody said the wake word into it on purpose**, during enrolment.
-  That is a positive by construction and every bit as certain.
-
-What is *not* used for judging is the augmented copies of those enrolment
-recordings — the same audio slid around the window to make more of it.
-Fine to train on; scoring a model on variants of its own training data is
-marking its own homework.
-
-The two are reported apart, because enrolment is deliberate, clear and
-close and spontaneous use is not:
-
-```
-after at 0.665: catches 88% of the real ones, and still fires on 14.9%
-       (80% of the ones said to it, 89% of the ones taught to it)
+```bash
+./evaluate.sh              # on firings the model has never seen
+./evaluate.sh --compare    # which recipe is actually better
 ```
 
-If those two numbers drift far apart, that gap is the interesting thing and
-should not be averaged away.
+`relearn.py`'s job is to decide whether to promote a model, not to say how
+good one is — it compares a candidate against the installed model, which was
+fitted on everything available at the time. Asking that model about its own
+training data is how you get 100% recall and 0% false wakes, which is memory
+rather than skill.
 
-### And only on what neither model has seen
+`train/evaluate.py` answers the other question, two ways, both leak-free:
 
-Holding examples out of the new fit is not enough on its own. The old model
-was fitted on everything available at the time, so judging both on the same
-set tests the new one on held-out data and the old one on its own homework.
-That looked like the running model catching **100% of everything at a
-threshold of 0.3**, which is not skill, it is memory.
+- **before learning** — the shipped model, fitted only on the recorded
+  corpus in `train/`, scored on everything from this room. It has genuinely
+  never seen any of it. The baseline: what you get with no learning at all.
+- **after learning** — five-fold cross-validation. The log is cut into five;
+  a model is fitted on the bank, the machine labels and four fifths of what
+  a person vouched for, then scored on the fifth it did not see. Five
+  models, five disjoint test sets, pooled into one curve.
 
-Models carry the time they were fitted, so anything logged since is fair to
-both. When there is not enough of it the older set is used and the report
-says so plainly, rather than quietly producing a number that favours
-whatever is already installed:
+Ground truth is what a person can vouch for: clips somebody listened to and
+labelled, plus enrolment recordings. Augmented copies of enrolment
+recordings are allowed in training and never in a test set.
 
+The two kinds of positive are reported apart, because enrolment is
+deliberate and a logged firing is not.
+
+### What it measures at
+
+At the shipped threshold of 0.5:
+
+| | |
+|---|---|
+| recall, known voices | 100% |
+| recall, a voice it has never heard | 66% |
+| false wakes per hour, room noise | 0.0 |
+
+## Settings
+
+| | |
+|---|---|
+| `WAKE_MODE` | `auto`, `openwakeword`, or `key` |
+| `WAKE_MODEL` | `hey_claude_whisper.npz` on the Pi |
+| `WAKE_THRESHOLD` | overrides what the model's own sweep chose |
+| `WAKE_STRIDE_SECONDS` | how often it looks (0.4) |
+| `WAKE_LOG` | write down firings at all (on) |
+| `WAKE_LOG_CLIPS` | how many recordings to keep (1500) |
+| `WAKE_NEAR` | score above which a near miss is remembered (0.5) |
+| `WAKE_NEAR_SECONDS` | how long to hold them (15) |
+| `WAKE_REPEAT_SECONDS` | within this, a repeat labels the miss (4) |
+| `WAKE_NEAR_EVERY` | slow sample of give-ups, seconds (180) |
+| `WAKE_FIT_C` | regularisation, read by `relearn.py` (0.001) |
+| `WAKE_FALSE_BUDGET` | false wakes the sweep may buy, read by `relearn.py` (0.05) |
+
+## Training one from scratch
+
+```bash
+python train/record_wake.py          # people saying it on purpose
+python train/record_room.py          # the room not saying it
+python train/train_whisper_wake.py   # writes models/hey_claude_whisper.npz
+python train/test_wake.py            # does it hear you
+python train/test_silence.py         # does it stay quiet in an empty room
 ```
-only 0 logged since the running model was fitted, so judging on everything
-a person can vouch for — which flatters the one already trained on it
-```
-
-
-
-Somebody who sat and listened to a clip is the only ground truth here, so
-that is what the promotion gate measures against — not a random slice of
-everything, which was measuring agreement with the machine's own guesses
-and is why the numbers swung between runs.
-
-In practice it can only answer half the question. Labelling a day of a
-television room produces almost entirely "no" — **142 of the first 143** —
-which measures false wakes beautifully and says nothing about recall. So
-human labels are used for the classes they cover, and machine labels fill
-in the class they don't, with the report saying which was which:
-
-```
-judging on 143 firings a person listened to, plus 75 the machine
-labelled to cover the other answer
-```
-
-The human half only grows, so two runs a week apart can be compared.
-
-Getting human "yes" labels turns out to be the hard part, and for a reason
-that took a while to see. Of the four hundred recordings the Pi keeps,
-three hundred and twelve were near misses: the periodic sample writes one
-every few minutes, which is four hundred and eighty a day into a four
-hundred clip budget, and it was quietly evicting every recording of the
-wake word actually firing — the only clips that can ever be labelled yes.
-Those samples now keep the vector, which is what training needs, and not
-the audio, which nobody was ever going to listen to.
-
-The calibration clips can't fill the gap either: they are already known
-positives, they have negative numbers, and they are deliberately never
-saved. `./label.sh` says so now, having once reported them as saved.
-
-First archive:
-
-```
-848 firings, 1304 near misses, 1826 labelled, 143 by a person, 400 with audio
-```
-
-## Does any of it work?
-
-```
-./evaluate.sh
-```
-
-`relearn.py` decides whether to promote a model; it does not say how good
-one is, and it cannot — it compares a candidate against whatever is
-installed, and the installed one was fitted on everything available at the
-time. Asking it about its own training data is how you get 100% recall and
-0% false wakes, which is memory rather than skill.
-
-`evaluate.py` answers the other question, twice, with no leakage. The
-baseline is the shipped model, fitted only on the recorded corpus, scored
-on everything from this room — it has genuinely never seen any of it. The
-comparison is five-fold cross-validation over the log: five models, five
-disjoint test sets, no row ever scored by a model that trained on it.
-
-Measured on 96 real firings a person can vouch for and 284 confirmed
-mistakes:
-
-```
-                    before learning        after learning
-  line   catches  false        catches  false
-  0.700      83%  48.6%            85%  12.0%
-  0.800      79%  41.2%            84%   9.5%
-  0.900      73%  32.0%            79%   7.0%
-  0.950      66%  27.5%            76%   6.0%
-```
-
-**Four times fewer false wakes, and slightly better recall.** That is the
-whole loop — logging what fires, labelling it, refitting on it — measured
-for the first time on data none of the models involved had seen.
-
-The split by where a positive came from is the other half of the story:
-
-```
-after learning, at 0.800:  77% of the ones said to it, 89% of the ones taught
-after learning, at 0.975:  54% of the ones said to it, 81% of the ones taught
-```
-
-Enrolment recordings are deliberate, clear and close. Somebody calling
-across a room is not, and the gap between those columns is the honest
-measure of how far there is to go.
-
-### Which recipe, measured rather than guessed
-
-```
-./evaluate.sh --compare
-```
-
-Cross-validating the *recipe* rather than a model is what the evaluation
-harness is really for: it makes training choices testable. Each variant is
-fitted five times over the same folds and judged three ways, because a win
-at one operating point can hide a loss everywhere else.
-
-```
-                                        catches   said  false @80%  separation
-  as it is now (C=0.1)                      85%    79%        7.0%       0.943
-  without the machine's guesses             91%    82%        2.8%       0.975
-  without the augmented enrolment copies    78%    69%       10.9%       0.926
-  human labels weighted 1x not 5x           84%    77%        8.1%       0.940
-  human labels weighted 20x                 84%    77%        8.5%       0.943
-  less regularised (C=1)                    75%    62%       13.4%       0.918
-  more regularised (C=0.01)                 95%    90%        3.9%       0.974
-  a small neural net instead                94%    90%        4.2%       0.974
-  more regularised still (C=0.003)          97%    92%        1.4%       0.987
-  much more regularised (C=0.001)           99%    97%        0.4%       0.993
-```
-
-`separation` is how often a real firing outscores a mistake over every
-pair — one number for the whole curve, immune to the thresholds moving.
-Heavy regularisation improves it from 0.943 to 0.993, so this is a better
-ranking and not the same curve relabelled.
-
-**Seventeen times fewer false wakes at the same recall**, and higher recall
-too. Seven hundred and sixty eight features against a few thousand rows is
-a great deal of room to overfit, and the fit was taking all of it — while
-the settings that had been guessed at, how much a human label is worth and
-whether to keep the machine's guesses, moved almost nothing next to it.
-
-Two honest limits. Thirty nine spontaneous positives is a small test set.
-And these false rates are over clips that already fired at some point, not
-over hours of a room, so they compare models fairly and do not predict a
-rate per evening.
