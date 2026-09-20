@@ -116,6 +116,12 @@ MIN_RECORD_SECONDS = float(_get("MIN_RECORD_SECONDS", "0.7"))
 # Give up after this long even if you're still talking.
 MAX_RECORD_SECONDS = float(_get("MAX_RECORD_SECONDS", "20.0"))
 
+# How long the array may deliver nothing before the speaker decides it has
+# gone deaf and does something about it. A working microphone hands over a
+# chunk every 80 ms even in a silent room, so anything approaching a second
+# is already wrong; ten is unambiguous and leaves room for a slow moment.
+MIC_DEAF_SECONDS = float(_get("MIC_DEAF_SECONDS", "10"))
+
 # --- Speech to text ---
 WHISPER_MODEL = _get("WHISPER_MODEL", "base.en")
 

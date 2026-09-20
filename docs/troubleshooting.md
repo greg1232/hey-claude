@@ -72,6 +72,29 @@ Measured on this Pi: with a 30 second tone playing, capture ran at 16040
 frames a second for exactly as long as the tone lasted and stopped within
 four seconds of it ending.
 
+**The speaker now notices on its own.** A working microphone hands over a
+chunk every 80 ms even in a silent room, so if `MIC_DEAF_SECONDS` (10) go
+by with nothing at all, `audio_in` says so in the log and plays a quarter
+second of silence to bring the array back:
+
+```
+[microphone] nothing from the array in 10s — waking it with a moment of
+silence (time 1)
+```
+
+One of those is worth a look. A stream of them means the WirePlumber rule
+is missing or not working, and the speaker is limping along on the net
+rather than being fixed — tested by deleting the rule, it recovers within
+ten seconds each time but only hears about half the time in between.
+
+The dashboard carries the same thing under `microphone`, which is the only
+way to tell a deaf speaker from one nobody is talking to without going and
+saying the wake word:
+
+```json
+"microphone": { "silent_for": 0.0, "hearing": true, "gone_deaf": 0 }
+```
+
 ## It wakes up when nobody said anything
 
 Measure it before turning dials:

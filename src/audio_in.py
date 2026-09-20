@@ -22,6 +22,12 @@ import config
 import tts
 
 
+# The microphone currently open, so the dashboard can say whether the
+# speaker can still hear. There is only ever one — the array allows a
+# single stream.
+LATEST: "Microphone | None" = None
+
+
 class Microphone:
     """An open microphone you can read chunks of audio from.
 
@@ -34,6 +40,14 @@ class Microphone:
     def __init__(self) -> None:
         self._queue: queue.Queue = queue.Queue()
         self._stream: sd.InputStream | None = None
+        # When the device last handed us anything at all. The array stops
+        # sending audio if its playback half goes quiet, and reports
+        # nothing when it does — see docs/troubleshooting.md. A microphone
+        # that returns nothing looks exactly like a quiet room, so the only
+        # way to tell them apart is the clock.
+        self._last_audio = time.monotonic()
+        self._last_nudge = 0.0
+        self.deaf_events = 0
         # How loud the room has been lately. Kept as a rolling window so the
         # cutoff between speech and silence can follow the room instead of
         # being fixed at whatever it happened to be when the program
@@ -41,6 +55,8 @@ class Microphone:
         self._recent: collections.deque = collections.deque(maxlen=375)
 
     def __enter__(self) -> "Microphone":
+        global LATEST
+        LATEST = self
         device = find_device(config.INPUT_DEVICE)
         name = sd.query_devices(device)["name"] if device is not None else "default"
         print(f"Microphone: {name}")
@@ -54,6 +70,7 @@ class Microphone:
             callback=self._on_audio,
         )
         self._stream.start()
+        self._last_audio = time.monotonic()
         return self
 
     def __exit__(self, *exc) -> None:
@@ -64,6 +81,11 @@ class Microphone:
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         """Called by sounddevice every time a new chunk of audio arrives."""
+        # This firing at all is the proof the array is still delivering, so
+        # note it before anything else — including the line below, which
+        # throws the audio away while we are talking. Otherwise every long
+        # answer would look like a dead microphone.
+        self._last_audio = time.monotonic()
         # Ignore everything that comes in while we're speaking, so the
         # speaker never hears itself.
         if tts.speaking.is_set():
@@ -77,7 +99,47 @@ class Microphone:
         try:
             return self._queue.get(timeout=timeout)
         except queue.Empty:
+            self._check_still_hearing()
             return None
+
+    def silent_for(self) -> float:
+        """Seconds since the device last handed us anything at all.
+
+        Not the same as a quiet room: a quiet room still delivers chunks of
+        near-silence eighty milliseconds apart. This only grows when the
+        hardware has stopped talking to us.
+        """
+        return time.monotonic() - self._last_audio
+
+    def _check_still_hearing(self) -> None:
+        """Say so if the array has stopped, and try to start it again.
+
+        The speaker went deaf for eleven minutes once and nothing anywhere
+        said a word — not ALSA, which went on reporting the stream RUNNING
+        with its hardware pointer frozen, not PipeWire, not the log. The
+        cure is in deploy.py and it is a WirePlumber rule. This is the net
+        underneath it, because the failure is silent and the next cause
+        might not be the one that has been fixed.
+
+        Reopening the input does nothing; that was measured, and so was
+        restarting the whole audio stack. Driving the playback half is the
+        only thing that brings it back.
+        """
+        quiet = self.silent_for()
+        if quiet < config.MIC_DEAF_SECONDS:
+            return
+        now = time.monotonic()
+        if now - self._last_nudge < config.MIC_DEAF_SECONDS:
+            return          # Already tried very recently; give it a chance.
+        self._last_nudge = now
+        self.deaf_events += 1
+        print(f"[microphone] nothing from the array in {quiet:.0f}s — "
+              f"waking it with a moment of silence (time {self.deaf_events})")
+        try:
+            tts.nudge()
+        except Exception as error:
+            print(f"[microphone] couldn't wake it "
+                  f"({type(error).__name__}: {error})")
 
     def flush(self, keep_seconds: float = 0.0) -> list[np.ndarray]:
         """Throw away audio waiting in the queue.

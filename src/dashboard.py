@@ -189,6 +189,22 @@ def speaker_state() -> dict:
     except Exception:
         out["sound"] = None
 
+    # Whether it can still hear. A speaker that has gone deaf behaves
+    # exactly like one nobody is talking to, so this is the only place the
+    # difference shows without saying the wake word and waiting.
+    try:
+        import audio_in
+        import config
+        mic = audio_in.LATEST
+        quiet = mic.silent_for() if mic else None
+        out["microphone"] = None if mic is None else {
+            "silent_for": round(quiet, 1),
+            "hearing": quiet < config.MIC_DEAF_SECONDS,
+            "gone_deaf": mic.deaf_events,
+        }
+    except Exception:
+        out["microphone"] = None
+
     try:
         import books
         book = books._reader

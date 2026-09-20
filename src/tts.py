@@ -315,6 +315,31 @@ def spoken_pieces(text: str):
         yield native, _trimmed(chunk.audio_int16_array, native)
 
 
+def nudge() -> None:
+    """Drive the playback half for a quarter of a second, silently.
+
+    The array only sends microphone audio while its playback endpoint is
+    being driven. When it stops, nothing anywhere reports it — see
+    docs/troubleshooting.md. The cure is the WirePlumber rule deploy.py
+    installs; this is what audio_in falls back on if it ever goes deaf
+    regardless, because reopening the input does not help and neither does
+    restarting the audio stack. Playing something does.
+
+    It takes the device lock like everything else here, because the array
+    is one piece of hardware and allows one stream. It does not set
+    `speaking`: there is nothing to hear, and the microphone needs to be
+    listening for exactly the audio this is trying to bring back.
+    """
+    import numpy as np
+
+    import sounds
+
+    device = find_output_device(config.OUTPUT_DEVICE)
+    rate = playable_rate(device, config.SAMPLE_RATE)
+    with _device, sounds.paused():
+        _play(device, rate, np.zeros(int(rate * 0.25), dtype=np.int16))
+
+
 def play_clip(audio, rate: int) -> None:
     """Play one lump of audio somebody found, at whatever rate it came at.
 
