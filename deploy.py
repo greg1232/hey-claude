@@ -432,6 +432,78 @@ WantedBy=timers.target
 """
 
 
+# The array only sends microphone audio while its playback endpoint is
+# actually being driven. Leave the sink idle and capture stops dead — no
+# error, no xrun, ALSA still reporting the stream RUNNING while hw_ptr sits
+# frozen. The wake word simply goes deaf, and nothing anywhere notices,
+# because a microphone that returns nothing is indistinguishable from a
+# quiet room.
+#
+# Measured on this Pi: with a 30 second tone playing, capture ran at 16040
+# frames a second for exactly as long as the tone lasted and stopped within
+# four seconds of it ending. That is also why pressing play on the speaker
+# appears to fix it — it does, for as long as the sound lasts.
+#
+# node.always-process keeps the sink running with no client attached, so the
+# device stays clocked and the microphone keeps arriving. Restarting the
+# speaker does not fix this, and neither does restarting PipeWire; only
+# driving the playback half does.
+NO_SUSPEND = """# Written by deploy.py. See docs/troubleshooting.md.
+#
+# The reSpeaker XVF3800 only sends microphone audio while its playback
+# endpoint is being driven. Left idle, capture stops and the wake word goes
+# deaf with nothing logged anywhere. Keep both halves awake.
+monitor.alsa.rules = [
+  {
+    matches = [
+      { node.name = "~alsa_output.usb-Seeed_Studio_reSpeaker.*" }
+      { node.name = "~alsa_input.usb-Seeed_Studio_reSpeaker.*" }
+    ]
+    actions = {
+      update-props = {
+        session.suspend-timeout-seconds = 0
+        node.always-process = true
+        node.pause-on-idle = false
+      }
+    }
+  }
+]
+"""
+
+WP_CONF = ".config/wireplumber/wireplumber.conf.d/50-respeaker-no-suspend.conf"
+
+
+def keep_the_array_awake(pi: Pi) -> None:
+    """Stop the microphone going deaf when the room is quiet."""
+    pi.run(f"mkdir -p $(dirname ~/{WP_CONF})", quiet=True)
+    handle, path = tempfile.mkstemp()
+    try:
+        Path(path).write_text(NO_SUSPEND)
+        pi.send(Path(path), f"~/{WP_CONF}")
+    finally:
+        os.close(handle)
+        os.unlink(path)
+
+    pi.run("systemctl --user restart wireplumber", quiet=True)
+    # Prove it, rather than trusting it: the hardware pointer on the capture
+    # device has to be moving, and at about the sample rate.
+    moving = pi.output(
+        "a=$(awk -F: '/hw_ptr/{print $2}' "
+        "/proc/asound/card*/pcm0c/sub0/status 2>/dev/null | head -1); "
+        "sleep 4; "
+        "b=$(awk -F: '/hw_ptr/{print $2}' "
+        "/proc/asound/card*/pcm0c/sub0/status 2>/dev/null | head -1); "
+        "echo $(( (${b:-0} - ${a:-0}) / 4 ))").strip()
+    try:
+        rate = int(moving)
+    except ValueError:
+        rate = 0
+    indent(f"microphone delivering {rate} frames a second"
+           if rate > 8000 else
+           f"microphone NOT delivering ({rate} frames a second) — see "
+           "docs/troubleshooting.md")
+
+
 def install_nightly(pi: Pi) -> None:
     """The timer that makes the loop a loop rather than a pipeline."""
     for name, text in (("claude-relearn.service",
@@ -762,6 +834,9 @@ def main() -> int:
 
     step("Checking the sound hardware")
     check_sound(pi)
+
+    step("Keeping the microphone awake when the room is quiet")
+    keep_the_array_awake(pi)
 
     step("Setting the nightly retraining going")
     pi.run("mkdir -p ~/.config/systemd/user", quiet=True)

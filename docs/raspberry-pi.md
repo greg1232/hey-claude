@@ -102,6 +102,15 @@ The catch is that it only accepts 16 kHz, and Piper's voices come out at
 of hardware, only one stream can be open at a time — which is why `tts.py`
 closes the device after every sound rather than leaving a player running.
 
+### It goes deaf if the speaker half goes quiet
+
+The array only sends microphone audio while its playback endpoint is being
+driven. Left idle, capture stops — with ALSA still reporting the stream
+`RUNNING` and nothing logged anywhere. `./deploy.sh` installs a WirePlumber
+rule (`node.always-process`) that keeps the sink running with no client
+attached, which keeps the device clocked and the microphone arriving. See
+[troubleshooting.md](troubleshooting.md) for how to check it.
+
 Plug it into a **blue USB 3.0 port**. On a Pi 4 the black USB 2 sockets can
 enumerate the array fine and then refuse to stream from it.
 

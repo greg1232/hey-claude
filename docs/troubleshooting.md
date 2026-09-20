@@ -37,6 +37,41 @@ same as this hardware one.
 person in particular, the real fix is "hey Claude, learn my voice" — see
 [wake-word.md](wake-word.md).
 
+## It goes deaf after a while, and playing something wakes it up
+
+**This is the array, not the wake word.** The reSpeaker XVF3800 only sends
+microphone audio while its playback endpoint is being driven. Leave the
+sink idle and capture stops dead — and nothing notices: ALSA still reports
+the stream `RUNNING`, PipeWire still shows the source `running`, no xrun,
+no error, nothing in any log. `mic.read()` simply returns nothing for ever
+and the wake word waits on a microphone that will never speak again.
+
+Playing anything revives it for exactly as long as the sound lasts, which
+is why pressing play appears to fix it.
+
+Check whether audio is actually arriving — the hardware pointer has to move
+at about the sample rate:
+
+```bash
+ssh you@your-pi 'a=$(awk -F: "/hw_ptr/{print \$2}" /proc/asound/card3/pcm0c/sub0/status); \
+  sleep 5; b=$(awk -F: "/hw_ptr/{print \$2}" /proc/asound/card3/pcm0c/sub0/status); \
+  echo $(( (b-a)/5 )) frames a second'
+```
+
+**16000 is healthy. 0 means it has gone deaf.** Restarting the speaker will
+not fix it, and neither will restarting PipeWire — only driving the
+playback half does.
+
+The cure is a WirePlumber rule that keeps the sink running with no client
+attached, which `./deploy.sh` installs at
+`~/.config/wireplumber/wireplumber.conf.d/50-respeaker-no-suspend.conf`. If
+the array has gone deaf, check that file is there and run `./deploy.sh`
+again if it isn't.
+
+Measured on this Pi: with a 30 second tone playing, capture ran at 16040
+frames a second for exactly as long as the tone lasted and stopped within
+four seconds of it ending.
+
 ## It wakes up when nobody said anything
 
 Measure it before turning dials:
