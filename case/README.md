@@ -7,8 +7,10 @@ array as a ceiling above it with its microphones and lights facing up.
     ./case/build.sh              base.3mf and lid.3mf
     ./case/build.sh --preview    ...and PNGs to look at first
 
-Two parts, no supports, no AMS, no adapters. Open `case/speaker-case.scad`
-to change anything; every dimension is named at the top of the file.
+Two parts, no supports, no AMS, no adapters. **The lid drops on and turns
+fifteen degrees to lock** — the case itself needs no fasteners at all. Open
+`case/speaker-case.scad` to change anything; every dimension is named at
+the top of the file.
 
 ## Where the numbers came from
 
@@ -62,7 +64,7 @@ Three leads. Two leave through the rear opening and one never leaves at all.
 
     port doorway, 335 to 25 deg, floor to rim
         nothing, in normal use — it is there so Ethernet and the
-        four USB ports stay reachable without unscrewing the lid
+        four USB ports stay reachable without taking the lid off
 
     inside, never leaves
         the array's USB-C down to a Pi USB 3.0 port
@@ -109,10 +111,8 @@ the lights and microphones are aimed into the Pi.
 
 ## What you need besides the plastic
 
-- 4 × M3 × 12 self-tapping screws for the lid, with a **flat-undersided
-  head** — pan, cheese or socket cap — no more than 6 mm across and 1.8 mm
-  tall. Not countersunk: the lid is counterbored flat, not coned.
-- 4 × M2.5 × 6 self-tapping screws for the Pi
+- 4 × M2.5 × 6 self-tapping screws for the Pi. The only fasteners in the
+  build — the lid is a bayonet and takes none.
 - 4 × Ø10 mm stick-on silicone feet, about 2 mm thick
 - A USB-C to USB-A lead for the array, 20 cm or so. Straight plugs are fine.
 - A 3.5 mm lead from the array to the speaker
@@ -175,24 +175,62 @@ Nothing in either part bridges more than 4 mm.
    the 3.5 mm lead in and feed it out of the rear opening.
 4. Drop the array into the base, **microphones and LEDs facing up**, sockets
    towards the rear opening.
-5. Lid on, four M3 screws down into the columns.
+5. Lid on, with its pip against the **anticlockwise** one of the two pips
+   on the base. Then turn it **clockwise**, about fifteen degrees, until it
+   stops. Shut, the two pips line up.
 
-### Nothing screws into the lid
+## The lid is a bayonet
 
-The lid's holes are 3.4 mm — deliberately wider than an M3 — so the screw
-passes straight through it and cuts thread only in the column below. If it
-bit the lid as well, the two threads would fight and the lid would jack
-itself back off the base instead of clamping down.
+Four lugs stand in from the skirt. Four heads stand out from the tops of
+the columns. The lugs drop past the heads, you turn, and they finish
+underneath them.
+
+    dropped on                        turned clockwise to shut
+      lug ──┐   ┌── head                   ┌─── head ───┐
+            │   │                          │   ┌────┐   │
+            └───┘   clear of each other    └───┤ lug│───┘   trapped
+                                                └────┘
+
+**Which way round is the whole thing, and it is easy to get backwards.**
+The lid's lug has to finish *under* the base's head. Lift the lid and the
+lug drives up into the head, which is what stops it. A lug on the base
+sitting under a roof on the lid draws identically and holds nothing at all
+— lifting the lid simply takes the roof away with it.
 
 | | |
 |---|---|
-| hole through the lid | 3.4 mm, clearance |
-| counterbore for the head | 6.0 mm wide, 1.8 mm deep, flat-bottomed |
-| pilot in the column | 2.5 mm, 14 mm deep |
+| turn, open to shut | 15° |
+| lug | 10° wide, 1.5 mm tall, reaching in to r = 65.6 |
+| head | reaching out to r = 67.2, so it overlaps the lug by 1.6 mm |
+| running clearance under the head | 0.15 mm |
+| nip over the last 3° | 0.05 mm |
 
-M3 × 12 puts 10.2 mm of thread into that 14 mm pilot. **14 mm is the
-longest that fits**; a 16 would bottom out on solid plastic and either split
-the column or hold the lid open.
+The lid rests on the tops of the columns from the moment it goes on, so
+there is nothing for a long ramp to pull down — it would only rub. The
+head's underside is flat for the whole turn and dips by 0.05 mm over the
+last three degrees, which takes up the running clearance and preloads the
+joint so it cannot rattle. Then the lug runs into a block and stops.
+
+**What you feel is the stop, not the nip.** Five hundredths of a millimetre
+is inside what the printer varies by anyway; the grip is a light preload,
+and the thing that tells you it is shut is that it will not turn any
+further.
+
+### The props under the heads
+
+A column is a 9 mm rib — about eight degrees of arc where the head sits —
+and the head and its stop together want eighteen. Printed off the rib
+alone, most of both would begin in mid-air. So the rib flares out into a
+wide shelf below the seam, at 41° off vertical, and the head and stop are
+then a 2 mm step off that shelf, which needs nothing to hold it up. All of
+it happens inboard of r = 65.2, where the lug never goes.
+
+### What it gives up against screws
+
+A screwed lid clamps hard; a bayonet holds. If the puck ends up standing on
+a loudspeaker, the screwed version would rattle less — the four silicone
+feet are doing that job here, and if the wake word gets worse when music is
+loud, softer feet are still the first thing to try.
 
 ## The feet are not decoration
 

@@ -7,9 +7,10 @@
 // -------------
 // A Raspberry Pi 4 lying flat in the bottom, and the reSpeaker XVF3800
 // 4-mic array as a ceiling above it, microphones and LEDs facing up. The
-// whole thing is a puck that stands on the speaker: 122 mm across and
-// 43 mm tall, which is close enough to an Echo Dot that nobody asks what
-// it is.
+// whole thing is a puck that stands on the speaker: 140 mm across and
+// 43 mm tall. The lid drops on and turns fifteen degrees to lock, so the
+// case itself needs no fasteners at all — the only screws in the build are
+// the four M2.5 that hold the Raspberry Pi to the floor.
 //
 // Every number below that describes the array was taken from Seeed's own
 // 2D mechanical drawing rather than from a ruler, except where a comment
@@ -101,7 +102,44 @@ REAR_WIDE = 72;
 // Ethernet at 338-351, the USB 3.0 pair at 354-6, the USB 2.0 pair at 10-21.
 PORTS      = 0;
 PORTS_WIDE = 50;
-SCREW_R = 65.0;     // four M3 down through the lid into the columns
+/* ---- the bayonet ---------------------------------------------------- */
+// The lid drops on and turns fifteen degrees. No screws, no inserts,
+// nothing in the box but plastic.
+//
+// The catch is where it can live. Both doorways run from 5 mm to the rim,
+// so above the Pi the wall is simply not there between 230 and 302 degrees
+// or between 335 and 25 — most of one side. The four columns are there
+// regardless: they stand clear of the wall, they already reach the lid and
+// already carry its weight. So the columns grow a head, and the lid's
+// skirt grows four lugs that turn in underneath it.
+//
+// Which way round matters, and is easy to get backwards. The lid's lug
+// must finish UNDER the base's head. Lift the lid and the lug drives up
+// into the head, which is what stops it. A head on the base sitting under
+// a roof on the lid looks the same in a drawing and holds nothing at all:
+// lifting the lid takes the roof away with it.
+//
+// The lid sits on the tops of the columns from the moment it goes on, so
+// there is nothing for a long ramp to pull down — it would only rub. The
+// head's underside is flat at BAY_GAP above the lug for the whole turn and
+// dips by BAY_NIP over the last BAY_NIP_A degrees. So it turns freely and
+// then tightens, and that last dip is what preloads the joint and keeps it
+// from rattling. Turning stops against a block at the far end.
+BAY_TRAVEL = 15;     // degrees from dropped-on to shut
+BAY_LUG_W  = 10;     // degrees of lug
+BAY_LUG_Z0 = 0.5;    // lug underside, above the seam
+BAY_LUG_H  = 1.5;
+BAY_GAP    = 0.15;   // running clearance under the head, while it turns
+BAY_NIP    = 0.05;   // and how far past the lug the last bit of it comes,
+BAY_NIP_A  = 3.0;    // over this many degrees, so it tightens at the end
+BAY_CLR    = 0.5;    // degrees of slack behind a lug at the open end
+BAY_MARK   = 90;     // where the pips go, on a clear stretch of wall
+
+// Radii. The lug reaches in from the skirt, the head reaches out from the
+// column, and they overlap by 1.6 mm — that overlap is the whole catch.
+BAY_STEM   = 65.2;   // the column, above the seam, turned down to this
+BAY_LUG_R  = 65.6;   // how far in the lid's lug reaches
+BAY_HEAD_R = 67.2;   // how far out the head reaches, a FIT inside the skirt
 
 /* ---- the logo on the lid -------------------------------------------- */
 // "arcs", "loop", "wordmark" or "none".
@@ -134,6 +172,13 @@ Z_TOP     = Z_BOARD + BOARD_T;          // top face of the array
 Z_SEAM    = Z_TOP;                      // base ends, lid begins
 Z_LID     = Z_TOP + LID_GAP;            // lid underside
 H         = Z_LID + LID_T;              // overall
+
+// The bayonet, now that the seam has a height. The lug sits just above the
+// seam, inside the skirt; the roof of the race is what stops the lid lifting.
+BAY_Z0   = Z_SEAM + BAY_LUG_Z0;         // the lid's lug
+BAY_Z1   = BAY_Z0 + BAY_LUG_H;
+BAY_RUN  = BAY_Z1 + BAY_GAP;            // head underside, while it turns
+BAY_SHUT = BAY_Z1 - BAY_NIP;            // head underside, at the stop
 
 R_OUT = CASE_D / 2;
 R_IN  = R_OUT - WALL;
@@ -226,17 +271,88 @@ function in_arc(a, lo, hi) =
 // slot per angle, cut from the outside in — a bar through the middle would
 // quietly cut the far side of the case as well, including the parts meant to
 // be left whole.
-module wall_slots(z0, z1, count, width) {
+module wall_slots(z0, z1, count, width, skip = []) {
     for (i = [0 : count - 1]) {
         a = i * 360 / count;
         if (!in_arc(a, REAR - REAR_WIDE / 2 - 4, REAR + REAR_WIDE / 2 + 4) &&
             !in_arc(a, (PORTS - PORTS_WIDE / 2 - 4 + 360) % 360,
-                       (PORTS + PORTS_WIDE / 2 + 4) % 360))
+                       (PORTS + PORTS_WIDE / 2 + 4) % 360) &&
+            len([for (s = skip) if (in_arc(a, (s[0] + 360) % 360,
+                                              (s[1] + 360) % 360)) 1]) == 0)
             rotate([0, 0, a])
                 translate([R_IN - 1, -width / 2, z0])
                     cube([WALL + 2, width, z1 - z0]);
     }
 }
+
+// A slice of a ring: r0 to r1, z0 to z1, between two angles. Every part
+// of the bayonet is made of these.
+module ring_wedge(r0, r1, z0, z1, a0, a1) {
+    rotate([0, 0, a0])
+        rotate_extrude(angle = a1 - a0, $fn = 240)
+            translate([r0, z0]) square([r1 - r0, z1 - z0]);
+}
+
+// Where a lug sits when the lid is shut, and the arc of head it turns
+// under. The head starts a clearance past where the lug drops in, so the
+// lug has somewhere to go straight down.
+function bay_lug_lo(a)  = a - BAY_LUG_W / 2;
+function bay_lug_hi(a)  = a + BAY_LUG_W / 2;
+// The head runs from just behind the lug's resting place to just short of
+// where the lug drops in — any further and the lug could not get down.
+function bay_head_lo(a) = a - BAY_LUG_W / 2 - 0.3;
+function bay_head_hi(a) = a - BAY_LUG_W / 2 + BAY_TRAVEL - BAY_CLR;
+
+// The head on one column: flat for most of its length, dipping over the
+// last few degrees onto the lug. The dip is at the low end, because the
+// lug turns that way and only its trailing edge ever reaches there — put
+// it at the other end and the lug would ride over it the whole way round.
+// Cut as a staircase of twenty wedges, each riser well under a layer.
+module bay_head(a, steps = 20) {
+    lo = bay_head_lo(a);
+    for (i = [0 : steps - 1])
+        ring_wedge(BAY_STEM, BAY_HEAD_R,
+                   BAY_SHUT + (BAY_RUN - BAY_SHUT) * i / steps, Z_LID,
+                   lo + BAY_NIP_A * i / steps,
+                   lo + BAY_NIP_A * (i + 1) / steps + 0.15);
+    ring_wedge(BAY_STEM, BAY_HEAD_R, BAY_RUN, Z_LID,
+               lo + BAY_NIP_A, bay_head_hi(a));
+}
+
+// What the lug runs into at the end. Turning stops here, and that is how
+// you know it is shut.
+function bay_stop_lo(a) = bay_lug_lo(a) - 3.5;
+module bay_stop(a)
+    ring_wedge(BAY_STEM, BAY_HEAD_R, Z_SEAM, Z_LID,
+               bay_stop_lo(a), bay_lug_lo(a) - 0.4);
+
+// What the head and the stop stand on. A column is a 9 mm rib — about
+// eight degrees where the head is — and the head and stop together want
+// eighteen. Printed off the rib alone, most of both would start in mid
+// air. So the rib flares into a wide shelf below the seam, and the head
+// and stop are then a 2 mm step off that, which needs nothing to hold it
+// up. The flare is 41 degrees off vertical, and it all happens inboard of
+// where the lug turns.
+module bay_prop(a) {
+    lo = bay_stop_lo(a);
+    hi = bay_head_hi(a);
+    hull() {
+        ring_wedge(58, BAY_STEM, Z_SEAM - 7, Z_SEAM - 6.9, a - 3.5, a + 3.5);
+        ring_wedge(58, BAY_STEM, Z_SEAM - 0.1, Z_SEAM, lo, hi);
+    }
+    ring_wedge(58, BAY_STEM, Z_SEAM, Z_LID, lo, hi);
+}
+
+// The lugs, standing in from the skirt. These are on the lid.
+module bay_lugs()
+    for (a = COLS)
+        ring_wedge(BAY_LUG_R, R_IN + 0.01, BAY_Z0, BAY_Z1,
+                   bay_lug_lo(a), bay_lug_hi(a));
+
+// A pip on the outside, so you can see where to start and where it stops.
+module bay_pip(a, z0, z1)
+    rotate([0, 0, a]) translate([R_OUT - 0.35, 0, (z0 + z1) / 2])
+        rotate([0, 0, 45]) cube([1.6, 1.6, z1 - z0], center = true);
 
 // Cool air comes in under the feet and up through here. The pattern is
 // held clear of the Pi's standoffs: a standoff printed over the edge of a
@@ -254,6 +370,7 @@ module floor_vents() {
 /* ---- the base ------------------------------------------------------- */
 
 module base() {
+  union() {
     difference() {
         union() {
             // Shell.
@@ -262,7 +379,7 @@ module base() {
                 translate([0, 0, FLOOR]) cylinder(r = R_IN, h = H);
             }
             // Four columns against the wall. The inner step carries the
-            // array; the outer part carries the lid and takes its screw.
+            // array; the outer part carries the lid and its bayonet.
             // Both start well outboard of the Pi, which occupies the middle
             // of the case up to Z_PI_TOP.
             for (a = COLS) rotate([0, 0, a]) {
@@ -282,10 +399,14 @@ module base() {
         // The array drops into a shallow recess so it cannot slide.
         translate([0, 0, Z_BOARD]) cylinder(r = BOARD_D / 2 + FIT, h = H);
 
-        // Screw pilots, down through the columns.
-        for (a = COLS)
-            rotate([0, 0, a]) translate([SCREW_R, 0, Z_LID - 14])
-                cylinder(d = 2.5, h = 16);
+        // Above the seam, turn the columns down to the stem so the lid's
+        // lugs have somewhere to sweep. Their corners used to reach R_IN
+        // exactly, which was fine for a lid that only ever went straight
+        // down and is not fine for one that turns.
+        difference() {
+            translate([0, 0, Z_SEAM]) cylinder(r = R_OUT + 5, h = H);
+            translate([0, 0, Z_SEAM - 1]) cylinder(r = BAY_STEM, h = H);
+        }
 
         // Pi mounting pilots.
         pi_hole_positions() translate([0, 0, FLOOR])
@@ -315,11 +436,20 @@ module base() {
             rotate([0, 0, a]) translate([R_OUT - 14, 0, -0.01])
                 cylinder(d = FOOT_D, h = FOOT_H);
     }
+
+    // A head on each column for the lid's lugs to turn under, the block
+    // that stops them, and two pips below the seam: the lid's own pip
+    // starts at one and finishes at the other.
+    for (a = COLS) { bay_prop(a); bay_head(a); bay_stop(a); }
+    bay_pip(BAY_MARK, Z_SEAM - 4.5, Z_SEAM - 0.5);
+    bay_pip(BAY_MARK + BAY_TRAVEL, Z_SEAM - 4.5, Z_SEAM - 0.5);
+  }
 }
 
 /* ---- the lid -------------------------------------------------------- */
 
 module lid() {
+  union() {
     difference() {
         union() {
             translate([0, 0, Z_LID]) cylinder(r = R_OUT, h = LID_T);
@@ -357,21 +487,22 @@ module lid() {
                         circle(r = LOGO_R, $fn = 96);
                     }
 
-        // Screws, counterbored so nothing stands proud of the top.
-        for (a = COLS) rotate([0, 0, a]) {
-            translate([SCREW_R, 0, Z_LID - 1]) cylinder(d = 3.4, h = LID_T + 2);
-            translate([SCREW_R, 0, Z_LID + LID_T - 1.8])
-                cylinder(d = 6.0, h = 2);
-        }
 
         // The rear notch, continuing the base's opening up through the
         // skirt so a right-angle plug can get out.
         translate([0, 0, Z_SEAM - 0.01]) rotate([0, 0, REAR - REAR_WIDE / 2])
             sector(R_OUT + 1, LID_GAP + 0.02, 0, REAR_WIDE);
 
-        // Warm air leaves at the top.
-        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 28, 3);
+        // Warm air leaves at the top, but not through a lug.
+        wall_slots(Z_SEAM + 1, Z_LID - 0.6, 28, 3,
+                   [for (a = COLS) [a - 8, a + 8]]);
     }
+
+    // The four lugs that turn in under the heads, and the pip that lines
+    // up with the base's two.
+    bay_lugs();
+    bay_pip(BAY_MARK, Z_SEAM + 0.5, Z_SEAM + 3.5);
+  }
 }
 
 /* ---- what to render ------------------------------------------------- */
