@@ -184,6 +184,7 @@ every tool and the settings it needs.
 | **[docs/raspberry-pi.md](docs/raspberry-pi.md)** | Deploying, the services, the array, the voice |
 | **[docs/dashboard.md](docs/dashboard.md)** | The page served from the Pi |
 | **[docs/troubleshooting.md](docs/troubleshooting.md)** | When something goes wrong |
+| **[docs/wifi-and-display.md](docs/wifi-and-display.md)** | *Planned* — networks it can remember, and a screen you can plug in |
 
 ## Not built yet
 
