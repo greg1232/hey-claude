@@ -311,8 +311,14 @@ def system_state() -> dict:
     }
 
 
-def wifi_state() -> dict:
-    """Which network, how strong, and what else is within reach."""
+def wifi_state(include_saved: bool = True) -> dict:
+    """Which network, how strong, what else is within reach, and what it
+    has credentials for.
+
+    `include_saved` is off when forget_wifi calls this, because that would
+    recurse: saved_networks needs to know what is connected, and this needs
+    to know what is saved.
+    """
     out = {"connected": "", "signal": 0, "address": _my_address(),
            "networks": []}
     active = _run("nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL",
@@ -332,7 +338,120 @@ def wifi_state() -> dict:
                        for n, s in sorted(seen.items(),
                                           key=lambda kv: -kv[1])][:20]
     out["can_change"] = _can_change_wifi()
+    if include_saved:
+        out["saved"] = saved_networks(out["connected"])
     return out
+
+
+def _wifi_device() -> str:
+    """The name of the wireless interface, rather than assuming wlan0."""
+    for line in _run("nmcli", "-t", "-f", "DEVICE,TYPE", "device").splitlines():
+        parts = line.split(":")
+        if len(parts) >= 2 and parts[1] == "wifi":
+            return parts[0]
+    return "wlan0"
+
+
+def saved_networks(connected: str = "") -> list[dict]:
+    """Every network this machine has credentials for.
+
+    Not the same list as the one it can see. The point of saving a network
+    is to do it somewhere else — you type in the one at the grandparents'
+    house before you drive there, and it is never in range while you do.
+
+    Passwords are deliberately not fetched. nmcli will hand them over and
+    nothing here asks; the page shows names.
+    """
+    rows = []
+    listed = _run("nmcli", "-t", "-f",
+                  "NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY",
+                  "connection", "show")
+    for line in listed.splitlines():
+        parts = line.split(":")
+        if len(parts) < 4 or "wireless" not in parts[1]:
+            continue
+        name = parts[0]
+        # The connection's name is not the network's. netplan called this
+        # one netplan-wlan0-solus and the network it joins is solus, so
+        # matching the two by name alone quietly fails.
+        ssid = _run("nmcli", "-t", "-g", "802-11-wireless.ssid",
+                    "connection", "show", name).strip() or name
+        rows.append({"name": name, "ssid": ssid,
+                     "autoconnect": parts[2] == "yes",
+                     "priority": int(parts[3] or 0),
+                     "current": bool(connected) and ssid == connected})
+    return sorted(rows, key=lambda r: (not r["current"], r["ssid"].lower()))
+
+
+def save_wifi(name: str, password: str, hidden: bool = False) -> dict:
+    """Remember a network without having to be standing in it.
+
+    `nmcli device wifi connect` — what join_wifi uses — needs the network
+    to be in range. This does not, which is the whole reason it exists.
+    """
+    name = name.strip()
+    if not name:
+        return {"ok": False, "said": "No network name."}
+    if not _can_change_wifi():
+        return {"ok": False, "said": CANNOT_CHANGE}
+
+    # Replace rather than pile up. Saving the same network twice is what
+    # somebody does when they got the password wrong the first time.
+    for row in saved_networks():
+        if row["ssid"] == name or row["name"] == name:
+            _run("nmcli", "connection", "delete", row["name"])
+
+    args = ["nmcli", "connection", "add", "type", "wifi",
+            "con-name", name, "ifname", _wifi_device(), "ssid", name]
+    if password:
+        args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+    if hidden:
+        args += ["802-11-wireless.hidden", "yes"]
+    try:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=20)
+    except Exception as error:
+        return {"ok": False, "said": f"{type(error).__name__}"}
+    if done.returncode != 0:
+        said = (done.stderr or done.stdout).strip().splitlines()
+        return {"ok": False, "said": said[-1] if said else "Didn't save."}
+    return {"ok": True, "said": f"Saved {name}. It will join when in range."}
+
+
+def forget_wifi(name: str) -> dict:
+    """Delete a saved network, unless that would strand the speaker.
+
+    Deleting the network currently carrying this request is a way to make
+    the speaker unreachable from the page that did it, so it is only
+    allowed when there is somewhere else to land.
+    """
+    name = name.strip()
+    if not name:
+        return {"ok": False, "said": "Which one?"}
+    if not _can_change_wifi():
+        return {"ok": False, "said": CANNOT_CHANGE}
+
+    state = wifi_state(include_saved=False)
+    connected = state.get("connected", "")
+    in_range = {n["name"] for n in state.get("networks", [])}
+    rows = saved_networks(connected)
+    going = [r for r in rows if r["name"] == name or r["ssid"] == name]
+    if not going:
+        return {"ok": False, "said": f"Nothing saved called {name}."}
+
+    if going[0]["current"]:
+        elsewhere = [r for r in rows
+                     if not r["current"] and r["ssid"] in in_range]
+        if not elsewhere:
+            return {"ok": False, "said":
+                    "That's the network it's on, and there's nothing else "
+                    "saved within reach. Save another one first."}
+
+    _run("nmcli", "connection", "delete", going[0]["name"])
+    return {"ok": True, "said": f"Forgotten {going[0]['ssid']}."}
+
+
+CANNOT_CHANGE = ("This machine won't let me change the network. "
+                 "Run ./deploy.sh once to allow it.")
 
 
 def _can_change_wifi() -> bool:
@@ -355,9 +474,7 @@ def join_wifi(name: str, password: str) -> dict:
     if not name:
         return {"ok": False, "said": "No network name."}
     if not _can_change_wifi():
-        return {"ok": False, "said": "This machine won't let me change the "
-                                     "network. Run ./deploy.sh once to allow "
-                                     "it."}
+        return {"ok": False, "said": CANNOT_CHANGE}
     args = ["nmcli", "device", "wifi", "connect", name]
     if password:
         args += ["password", password]
@@ -434,8 +551,17 @@ class Pages(http.server.BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         try:
             if path == "/api/wifi":
-                return self._json(join_wifi(body.get("name", ""),
-                                            body.get("password", "")))
+                # `join` is the default so the page that shipped before
+                # saved networks existed goes on working unchanged.
+                doing = body.get("action", "join")
+                name = body.get("name", "")
+                if doing == "save":
+                    return self._json(save_wifi(name,
+                                                body.get("password", ""),
+                                                bool(body.get("hidden"))))
+                if doing == "forget":
+                    return self._json(forget_wifi(name))
+                return self._json(join_wifi(name, body.get("password", "")))
             if path == "/api/do":
                 return self._json(do(body.get("what", ""),
                                      str(body.get("value", ""))))
@@ -757,25 +883,45 @@ async function drawWifi(){
      (d.can_change?'':`<div class=sub style="margin-top:.6rem">This machine
        won't let me change the network. Run <b>./deploy.sh</b> once from the
        laptop to allow it.</div>`)+`</div>`+
-   `<div class=card><h2>Join a network</h2>
+   `<div class=card><h2>Add a network</h2>
      <label>Name</label><input id=ssid value="${esc(d.connected)}">
      <label>Password</label><input id=pw type=password placeholder="leave empty if open">
+     <label style="margin-top:.6rem"><input id=hidden type=checkbox
+       style="width:auto;margin-right:.4rem">Hidden network</label>
      <div class=acts style="margin-top:.9rem">
-       <button class=act onclick="join()">Join</button></div>
+       <button class=act onclick="wifi('join')">Join now</button>
+       <button class=act onclick="wifi('save')">Save for later</button></div>
      <div class=said id=said></div>
-     <div class=sub style="margin-top:.6rem">If it works, this page moves to a
-      new address. If it doesn't, the Pi keeps the network it had.</div></div>`+
+     <div class=sub style="margin-top:.6rem"><b>Join now</b> needs the network
+      to be in range, and if it works this page moves to a new address.
+      <b>Save for later</b> does not — type in the network somewhere else and
+      it joins when it gets there.</div></div>`+
+   `<div class=card><h2>Saved</h2>`+
+    ((d.saved||[]).length?'':`<div class=sub>Nothing saved yet.</div>`)+
+    (d.saved||[]).map(s=>`<div class=net>`+
+      `<span>${esc(s.ssid)}${s.current?' <b>· on it now</b>':''}</span>`+
+      `<span><button class=act style="padding:.15rem .5rem;font-size:.75rem"
+        onclick="forget('${esc(s.name)}')">Forget</button></span></div>`).join('')+
+    `</div>`+
    `<div class=card><h2>In range</h2>`+
     d.networks.map(n=>`<div class=net onclick="document.getElementById('ssid').value='${esc(n.name)}'">`+
       `<span>${esc(n.name)}</span><span class=sub>${n.signal}%</span></div>`).join('')+
     `</div>`;
 }
-async function join(){
+async function wifi(action){
   const name=$('#ssid').value, password=$('#pw').value;
-  $('#said').textContent='Joining…';
-  const out=await post('/api/wifi',{name,password});
-  $('#said').textContent=(out.ok?'Joined. ':'Did not join. ')+(out.said||'')+
+  const hidden=$('#hidden')&&$('#hidden').checked;
+  $('#said').textContent=action==='save'?'Saving…':'Joining…';
+  const out=await post('/api/wifi',{action,name,password,hidden});
+  $('#said').textContent=(out.said||'')+
     (out.ok&&out.address?` Now at ${out.address}.`:'');
+  if(out.ok&&action==='save') drawWifi();
+}
+async function forget(name){
+  $('#said').textContent='…';
+  const out=await post('/api/wifi',{action:'forget',name});
+  $('#said').textContent=out.said||'';
+  if(out.ok) drawWifi();
 }
 
 draw();
