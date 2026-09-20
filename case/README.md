@@ -109,7 +109,9 @@ the lights and microphones are aimed into the Pi.
 
 ## What you need besides the plastic
 
-- 4 × M3 × 12 self-tapping screws (the countersinks take a head up to 6 mm)
+- 4 × M3 × 12 self-tapping screws for the lid, with a **flat-undersided
+  head** — pan, cheese or socket cap — no more than 6 mm across and 1.8 mm
+  tall. Not countersunk: the lid is counterbored flat, not coned.
 - 4 × M2.5 × 6 self-tapping screws for the Pi
 - 4 × Ø10 mm stick-on silicone feet, about 2 mm thick
 - A USB-C to USB-A lead for the array, 20 cm or so. Straight plugs are fine.
@@ -174,6 +176,23 @@ Nothing in either part bridges more than 4 mm.
 4. Drop the array into the base, **microphones and LEDs facing up**, sockets
    towards the rear opening.
 5. Lid on, four M3 screws down into the columns.
+
+### Nothing screws into the lid
+
+The lid's holes are 3.4 mm — deliberately wider than an M3 — so the screw
+passes straight through it and cuts thread only in the column below. If it
+bit the lid as well, the two threads would fight and the lid would jack
+itself back off the base instead of clamping down.
+
+| | |
+|---|---|
+| hole through the lid | 3.4 mm, clearance |
+| counterbore for the head | 6.0 mm wide, 1.8 mm deep, flat-bottomed |
+| pilot in the column | 2.5 mm, 14 mm deep |
+
+M3 × 12 puts 10.2 mm of thread into that 14 mm pilot. **14 mm is the
+longest that fits**; a 16 would bottom out on solid plastic and either split
+the column or hold the lid open.
 
 ## The feet are not decoration
 
