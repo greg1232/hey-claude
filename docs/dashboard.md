@@ -40,6 +40,88 @@ A short list, deliberately:
 | `timer` | set a timer, in minutes |
 | `restart` | restart the service — it answers first, then goes away |
 
+## Wi-Fi
+
+It shows the network it is on, what is in range, and **what it has saved**
+— which is not the same list. Saving a network does not need it to be in
+range: you type in the one at the grandparents' house before you drive
+there, and it joins when it gets there.
+
+| | |
+|---|---|
+| **Join now** | connect to something in range, and remember it |
+| **Save for later** | remember it without connecting; works anywhere |
+| **Hidden network** | for one that does not broadcast its name |
+| **Forget** | delete a saved network |
+
+Two things it will not do. It never sends a saved password back to the
+page — `nmcli` will hand over stored secrets and nothing here asks, so
+somebody who has forgotten one retypes it. And it refuses to forget the
+network it is currently on unless another saved network is in range, because
+deleting the connection carrying the request is a way to make the speaker
+unreachable from the page that did it.
+
+Note that a connection's name is not the network's name. netplan calls one
+`netplan-wlan0-solus` and the network it joins is `solus`, so the SSID is
+read per connection rather than assumed.
+
+## When it cannot get onto anything
+
+A speaker with the wrong Wi-Fi is a brick: the dashboard is where you fix
+the network, and the dashboard is on the network. So after `RESCUE_AFTER`
+minutes unable to join anything, it **becomes** a network — see
+`src/rescue.py`.
+
+It says so out loud, because it can:
+
+> I can't get onto the network. I've made one of my own. On your phone,
+> join Claude Speaker. The password is heyclaude, all one word and all
+> lower case.
+
+and lights the ring amber, which is used for nothing else.
+
+The password is read aloud and then typed into a phone, where a space or a
+capital is a failed attempt with no explanation — so it is one lower-case
+word by default and the announcement describes its shape. `AP_PASSWORD`
+changes it. It cannot be open: an open access point would put a page with
+no password, which can change your Wi-Fi and shows what was said in the
+room, in front of anybody walking past.
+
+**There is one radio, so this is a repair mode.** While the access point is
+up the speaker has no internet and cannot answer questions. Every rule
+below exists to keep it short:
+
+| | |
+|---|---|
+| `RESCUE_AFTER` (5 min) | how long adrift before it gives up on the house |
+| `RESCUE_GIVE_UP` (15 min) | if nobody joins, tear it down and go back to looking |
+| Ethernet | never, while a cable is working |
+| Credentials arrive | drop the access point at once and go and use them |
+
+The failure being designed against is not the access point failing to come
+up. It is a router rebooting for ninety seconds while the speaker quietly
+deserts it and stops looking. A speaker that abandons a working network is
+harder to live with than one that occasionally needs setting up.
+
+### The captive portal needs the Pi's password once
+
+Joining the access point should make a phone pop up a sign-in sheet
+straight onto this page. That needs two pieces of system config, installed
+by `./deploy.sh` **run from a terminal where it can ask for the Pi's
+password**:
+
+- `net.ipv4.ip_unprivileged_port_start=80`, so the dashboard can answer on
+  port 80 — the port every operating system probes to decide whether a
+  network needs signing into.
+- a dnsmasq line pointing every name at `10.42.0.1`, so the probe arrives.
+
+Without them the access point still works and the page is still on port
+8080; the phone just will not offer to open it, and may warn that the
+network has no internet. The log says which you have:
+
+    [dashboard] no captive portal on port 80 (PermissionError) — the page
+    is still on 8080
+
 ## How it runs
 
 Inside the speaker, on a daemon thread — not beside it. That is the whole

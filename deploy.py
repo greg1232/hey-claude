@@ -504,6 +504,55 @@ def keep_the_array_awake(pi: Pi) -> None:
            "docs/troubleshooting.md")
 
 
+# Two small pieces of system config the rescue access point needs, both
+# installed once. See src/rescue.py and docs/wifi-and-display.md.
+#
+# The dashboard runs as an ordinary user on 8080, and a captive portal has
+# to answer on 80 — the port every operating system probes to decide
+# whether a network needs signing into. Lowering the unprivileged port
+# floor to 80 lets it bind that without the speaker becoming root. It does
+# mean any process on the Pi may bind 80 and up; on a machine that does one
+# job that is a fair trade, and it is a trade rather than a detail.
+PORT_FLOOR = """# Installed by deploy.py — see src/rescue.py.
+# So the dashboard can answer the captive portal probe on port 80 without
+# running as root. Ports below 80 are still privileged.
+net.ipv4.ip_unprivileged_port_start = 80
+"""
+PORT_FLOOR_PATH = "/etc/sysctl.d/60-claude-speaker-portal.conf"
+
+# And every name a phone looks up on the rescue network has to resolve to
+# the speaker, or the probe never arrives. NetworkManager runs dnsmasq for
+# a shared connection and reads this directory.
+CAPTIVE_DNS = """# Installed by deploy.py — see src/rescue.py.
+# On the rescue access point, every name answers as the speaker, so a
+# phone's captive-portal probe lands on the dashboard.
+address=/#/10.42.0.1
+"""
+CAPTIVE_DNS_PATH = "/etc/NetworkManager/dnsmasq-shared.d/claude-speaker.conf"
+
+
+def allow_captive_portal(pi: Pi, ask: bool = True) -> None:
+    """Let the speaker answer on port 80, and point every name at itself."""
+    have_port = pi.output(f"cat {PORT_FLOOR_PATH} 2>/dev/null").strip()
+    have_dns = pi.output(f"cat {CAPTIVE_DNS_PATH} 2>/dev/null").strip()
+    if have_port == PORT_FLOOR.strip() and have_dns == CAPTIVE_DNS.strip():
+        indent("already allowed")
+        return
+    if not ask or not can_ask_for_a_password():
+        indent("not set up — it can still raise the access point, but a")
+        indent("phone won't offer to sign in. Needs the Pi's password once.")
+        return
+
+    indent("allowing the dashboard to answer on port 80")
+    pi.run(f"printf '%s' {shlex.quote(PORT_FLOOR)} | "
+           f"sudo tee {PORT_FLOOR_PATH} >/dev/null && "
+           f"sudo sysctl -q -p {PORT_FLOOR_PATH}", tty=True)
+    indent("pointing every name on the rescue network at the speaker")
+    pi.run(f"sudo mkdir -p $(dirname {CAPTIVE_DNS_PATH}) && "
+           f"printf '%s' {shlex.quote(CAPTIVE_DNS)} | "
+           f"sudo tee {CAPTIVE_DNS_PATH} >/dev/null", tty=True)
+
+
 def install_nightly(pi: Pi) -> None:
     """The timer that makes the loop a loop rather than a pipeline."""
     for name, text in (("claude-relearn.service",
@@ -837,6 +886,9 @@ def main() -> int:
 
     step("Keeping the microphone awake when the room is quiet")
     keep_the_array_awake(pi)
+
+    step("Letting it be an access point when it can't find a network")
+    allow_captive_portal(pi)
 
     step("Setting the nightly retraining going")
     pi.run("mkdir -p ~/.config/systemd/user", quiet=True)

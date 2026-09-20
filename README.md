@@ -127,6 +127,7 @@ python src/wake_log.py       #    what has woken it, and how those went
 | `src/search.py` | Web search, which runs on Anthropic's side |
 | `src/enroll.py` | Learns a voice from somebody repeating the wake word |
 | `src/wishes.py` | Writes down what it was asked for and can't do |
+| `src/rescue.py` | Becomes an access point when it can't find a network |
 | `src/eggs.py` | The things it does that nobody told you about |
 | **Hardware** | |
 | `case/speaker-case.scad` | A printed case for the Pi and the array — see [case/README.md](case/README.md) |
@@ -184,7 +185,7 @@ every tool and the settings it needs.
 | **[docs/raspberry-pi.md](docs/raspberry-pi.md)** | Deploying, the services, the array, the voice |
 | **[docs/dashboard.md](docs/dashboard.md)** | The page served from the Pi |
 | **[docs/troubleshooting.md](docs/troubleshooting.md)** | When something goes wrong |
-| **[docs/wifi-and-display.md](docs/wifi-and-display.md)** | *Planned* — getting it onto a network, and keeping it there |
+| **[docs/wifi-and-display.md](docs/wifi-and-display.md)** | *Planned* — a screen you can plug in |
 
 ## Not built yet
 
@@ -201,3 +202,5 @@ every tool and the settings it needs.
 - **More than one speaker.** `.deploy-target` holds a single host, and
   `train/archive.py` uploads every device's state to the same repository
   root, so a second Pi would overwrite the first one's data.
+- **A screen you can plug in.** See
+  [docs/wifi-and-display.md](docs/wifi-and-display.md).

@@ -45,6 +45,12 @@ history: deque = deque(maxlen=180)     # about half an hour at ten seconds
 _started = False
 _cpu_was: tuple | None = None
 
+# When somebody last asked this page for anything. src/rescue.py reads it to
+# decide whether anyone actually turned up after it raised an access point:
+# a phone that associates and wanders off is not somebody fixing the Wi-Fi,
+# and a request to this page is.
+last_request_at = 0.0
+
 
 def note(kind: str, said: str = "", answer: str = "", score: float = 0.0):
     """Tell the dashboard something happened. Never raises."""
@@ -65,6 +71,30 @@ def start() -> None:
     _started = True
     threading.Thread(target=_watch_machine, daemon=True).start()
     threading.Thread(target=_serve, daemon=True).start()
+    threading.Thread(target=_serve_portal, daemon=True).start()
+
+
+def _serve_portal() -> None:
+    """Also answer on port 80, for the captive portal.
+
+    When the speaker is its own access point, a phone joining it asks for
+    one of the addresses its operating system probes — and dnsmasq points
+    every name at us, so the probe arrives here. Anything other than the
+    exact success reply it expects is what makes the phone put up a "sign
+    in to this network" sheet instead of quietly leaving for cellular. So
+    this serves the dashboard, and the sheet opens on it.
+
+    Needs deploy.py to have lowered ip_unprivileged_port_start; without
+    that this fails, the portal does not pop up, and everything else still
+    works on 8080.
+    """
+    try:
+        server = http.server.ThreadingHTTPServer(("0.0.0.0", 80), Pages)
+    except Exception as error:
+        print(f"[dashboard] no captive portal on port 80 "
+              f"({type(error).__name__}) — the page is still on {PORT}")
+        return
+    server.serve_forever()
 
 
 def _serve() -> None:
@@ -340,6 +370,11 @@ def wifi_state(include_saved: bool = True) -> dict:
     out["can_change"] = _can_change_wifi()
     if include_saved:
         out["saved"] = saved_networks(out["connected"])
+    try:
+        import rescue
+        out["rescue"] = rescue.state()
+    except Exception:
+        out["rescue"] = None
     return out
 
 
@@ -414,7 +449,38 @@ def save_wifi(name: str, password: str, hidden: bool = False) -> dict:
     if done.returncode != 0:
         said = (done.stderr or done.stdout).strip().splitlines()
         return {"ok": False, "said": said[-1] if said else "Didn't save."}
-    return {"ok": True, "said": f"Saved {name}. It will join when in range."}
+    return {"ok": True, "said": f"Saved {name}. It will join when in range.",
+            **_stand_down_if_rescuing(name)}
+
+
+def _stand_down_if_rescuing(name: str) -> dict:
+    """Credentials have arrived, so stop being an access point and go.
+
+    Answering first and acting afterwards is not politeness, it is the only
+    order that works: whoever asked is joined to the access point this is
+    about to take down, so the reply has to be on the wire before the radio
+    changes what it is doing.
+    """
+    try:
+        import rescue
+        if not rescue.active():
+            return {}
+    except Exception:
+        return {}
+
+    def go():
+        try:
+            import rescue
+            rescue.down(f"{name} was saved")
+            ok, said = rescue._run("nmcli", "connection", "up", name)
+            print(f"[rescue] joining {name}: {'ok' if ok else said}")
+        except Exception as error:
+            print(f"[rescue] {type(error).__name__}: {error}")
+
+    threading.Timer(2.0, go).start()
+    return {"leaving": True,
+            "said_extra": "Dropping my own network and joining that one. "
+                          "Rejoin your usual Wi-Fi to see this page again."}
 
 
 def forget_wifi(name: str) -> dict:
@@ -528,6 +594,8 @@ class Pages(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):                                     # noqa: N802
+        global last_request_at
+        last_request_at = time.time()
         path = urllib.parse.urlparse(self.path).path
         try:
             if path == "/":
@@ -543,6 +611,8 @@ class Pages(http.server.BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):                                    # noqa: N802
+        global last_request_at
+        last_request_at = time.time()
         length = int(self.headers.get("Content-Length", 0) or 0)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -876,6 +946,12 @@ async function drawWifi(){
   const d=await get('/api/wifi');
   $('#where').textContent=`${d.address} · ${d.connected||'not connected'}`;
   $('#body').innerHTML=
+   ((d.rescue&&d.rescue.active)?`<div class=card
+      style="border-color:#c87b2a"><h2>This is my own network</h2>
+      <div class=sub>I couldn't get onto any Wi-Fi, so I made this one
+      (<b>${esc(d.rescue.name)}</b>) so you could reach me. There's no
+      internet on it, so I can't answer questions until I'm back on a real
+      network. Type yours in below and I'll go and join it.</div></div>`:'')+
    `<div class=card><h2>Connected to</h2>
      <div class=row><span>${esc(d.connected)||'nothing'}</span>
        <b>${d.signal?d.signal+'%':''}</b></div>
@@ -913,9 +989,9 @@ async function wifi(action){
   const hidden=$('#hidden')&&$('#hidden').checked;
   $('#said').textContent=action==='save'?'Saving…':'Joining…';
   const out=await post('/api/wifi',{action,name,password,hidden});
-  $('#said').textContent=(out.said||'')+
+  $('#said').textContent=(out.said||'')+(out.said_extra?' '+out.said_extra:'')+
     (out.ok&&out.address?` Now at ${out.address}.`:'');
-  if(out.ok&&action==='save') drawWifi();
+  if(out.ok&&action==='save'&&!out.leaving) drawWifi();
 }
 async function forget(name){
   $('#said').textContent='…';

@@ -20,6 +20,7 @@ import config
 import dashboard
 import enroll
 import lights
+import rescue
 import sounds
 import stt
 import wake_log
@@ -37,6 +38,7 @@ def run_voice_mode() -> None:
     timers.start(tts.speak, tts.ring_once)  # Rings on its own thread.
     sounds.start()  # Watches the clock on anything left playing.
     dashboard.start()  # A page to look at, from a browser on this network.
+    rescue.start()  # ...and an access point of its own if there isn't one.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()

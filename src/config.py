@@ -212,6 +212,31 @@ FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 HF_TOKEN = _get("HF_TOKEN", "")
 
 
+# --- When it can't get onto a network ---
+# After this long unable to join anything, the speaker raises an access
+# point of its own and says so, so you can fix the Wi-Fi from a phone. See
+# src/rescue.py. Minutes, not seconds: a router reboot must pass without
+# the speaker deserting the network over it.
+RESCUE = _get("RESCUE", "on").lower() not in ("off", "0", "false", "no")
+RESCUE_AFTER = float(_get("RESCUE_AFTER", "5"))
+# And if nobody joins it in this long, tear it down and go back to looking.
+# An unattended speaker has to end up back on the house network by itself
+# once the house network returns.
+RESCUE_GIVE_UP = float(_get("RESCUE_GIVE_UP", "15"))
+RESCUE_EVERY = float(_get("RESCUE_EVERY", "20"))
+
+# What that access point is called, and the password for it. It cannot be
+# open: an open one puts a page with no password, which can change your
+# Wi-Fi and shows what was said in the room, in front of anybody walking
+# past. The speaker reads the password out when it announces itself, so the
+# default is the one string everybody in the house already knows rather
+# than something random nobody could type. WPA2 needs eight characters.
+AP_NAME = _get("AP_NAME", "Claude Speaker")
+# One word and all lower case on purpose: it is read out loud and then
+# typed into a phone, where a space or a capital is a failed attempt with
+# no explanation. rescue.spoken_password() describes whatever is set here.
+AP_PASSWORD = _get("AP_PASSWORD", "heyclaude")
+
 # --- The dashboard ---
 # A page served from the Pi, for a browser on the same network: what the
 # speaker is doing, how the machine is, and which Wi-Fi it is on.

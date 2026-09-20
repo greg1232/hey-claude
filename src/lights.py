@@ -64,6 +64,10 @@ STATES = {
     # is on it is the only instruction the person has: keep saying it until
     # the light goes out.
     "learning":  (SOLID, 0xAA00FF, 0),
+    # Amber, slow, and used for nothing else: it is an access point and it
+    # is waiting for somebody. Visible from the doorway, which is the
+    # point — see src/rescue.py.
+    "rescue":    (BREATHE, 0xFF8800, 2),
 }
 
 _lock = threading.Lock()
