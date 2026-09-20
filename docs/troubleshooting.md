@@ -68,6 +68,15 @@ attached, which `./deploy.sh` installs at
 the array has gone deaf, check that file is there and run `./deploy.sh`
 again if it isn't.
 
+**It survives a reboot**, which is worth saying because the rule is a file
+in a home directory read by a user service, and that is exactly the sort of
+thing that quietly does not come back. Measured on a cold boot: the machine
+came up at 12:06:03, the speaker was ready at 12:06:58, the playback PCM was
+`RUNNING` with nothing attached to it, and capture held 16002 to 16013
+frames a second through five minutes of silence with the watchdog below
+never once having to step in. Under the old behaviour the array had stopped
+after 69.8 seconds.
+
 Measured on this Pi: with a 30 second tone playing, capture ran at 16040
 frames a second for exactly as long as the tone lasted and stopped within
 four seconds of it ending.
