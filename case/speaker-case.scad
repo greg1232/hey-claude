@@ -8,9 +8,10 @@
 // A Raspberry Pi 4 lying flat in the bottom, and the reSpeaker XVF3800
 // 4-mic array as a ceiling above it, microphones and LEDs facing up. The
 // whole thing is a puck that stands on the speaker: 140 mm across and
-// 43 mm tall. The lid drops on and turns fifteen degrees to lock, so the
-// case itself needs no fasteners at all — the only screws in the build are
-// the four M2.5 that hold the Raspberry Pi to the floor.
+// 43 mm tall. The lid drops on and turns fifteen degrees to lock, and the
+// Pi clips onto four sprung posts, so there is no fastener anywhere in it
+// — nothing to buy but the plastic and the leads. PI_MOUNT = "screw" puts
+// the M2.5 pilots back for anyone who would rather.
 //
 // Every number below that describes the array was taken from Seeed's own
 // 2D mechanical drawing rather than from a ruler, except where a comment
@@ -72,7 +73,28 @@ PI_HOLES  = [58, 49];
 // from three edges, which puts their centre 10 mm off the board's.
 PI_HOLE_OFF = -10;
 PI_STANDOFF = 5.0;
-PI_PILOT    = 2.4;  // M2.5 self-tapping
+PI_PILOT    = 2.4;  // M2.5 self-tapping, if you'd rather use screws
+
+// How the Pi is held down: "clip" snaps it onto four posts and needs no
+// screws at all, "screw" keeps the M2.5 pilots.
+PI_MOUNT = "clip";
+
+// The snap itself. The Pi's mounting holes are 2.7 mm, so a 2.4 mm post
+// drops through with a little to spare and a 0.6 mm hook has to bend
+// 0.45 mm to follow it.
+//
+// That bend is the whole design. Each half is a cantilever 1.2 mm thick
+// and PI_CLIP_DEEP + the stem long, and the strain at the root is
+// 3.t.d / 2.L^2 — 1.4% here, against PLA yielding somewhere around 2 to
+// 3%. Shortening the split is what breaks it: at 4 mm the same hook is
+// 2.6% and cracks on the first push. The split runs well down into the
+// standoff for that reason, and stops a millimetre above the underside so
+// it never becomes a hole in the floor.
+PI_CLIP_D    = 2.4;   // the post, through the board
+PI_CLIP_BARB = 0.6;   // how far the hook stands out, per side
+PI_CLIP_LEAD = 1.8;   // the cone above it, which does the pushing-apart
+PI_CLIP_SLOT = 0.9;   // the split, two extrusions wide
+PI_CLIP_DEEP = 6.0;   // how far that split runs down
 
 /* ---- the case ------------------------------------------------------- */
 
@@ -257,6 +279,28 @@ module mic_positions()
               [MIC_DX, MIC_BOT], [-MIC_DX, MIC_BOT]])
         translate([p[0], p[1], 0]) children();
 
+// One snap post, standing on a standoff. The hook's underside is flat and
+// faces down — a 0.6 mm overhang, which the printer bridges without
+// noticing — and the cone above it is what the board rides up as it goes
+// on. The base prints floor-down, so all of this prints the right way up.
+module pi_clip_post() {
+    stem = PI_T + 0.2;          // the board, and a little daylight
+    translate([0, 0, Z_PI]) {
+        cylinder(d = PI_CLIP_D, h = stem + 0.01);
+        translate([0, 0, stem])
+            cylinder(d1 = PI_CLIP_D + 2 * PI_CLIP_BARB,
+                     d2 = PI_CLIP_D - 0.6, h = PI_CLIP_LEAD);
+    }
+}
+
+// The split that lets it flex, cut after the post is made.
+module pi_clip_slot() {
+    wide = PI_CLIP_D + 2 * PI_CLIP_BARB + 2;
+    translate([-PI_CLIP_SLOT / 2, -wide / 2, Z_PI - PI_CLIP_DEEP])
+        cube([PI_CLIP_SLOT, wide,
+              PI_CLIP_DEEP + PI_T + 0.2 + PI_CLIP_LEAD + 1]);
+}
+
 module pi_hole_positions()
     for (x = [-1, 1], y = [-1, 1])
         translate([PI_HOLE_OFF + x * PI_HOLES[0] / 2, y * PI_HOLES[1] / 2, 0])
@@ -388,9 +432,10 @@ module base() {
                 translate([BOARD_D / 2 + 0.5, -4.5, 0])
                     cube([R_IN - BOARD_D / 2 - 0.5, 9, Z_LID]);
             }
-            // Standoffs for the Pi.
+            // Standoffs for the Pi, and the posts it snaps onto.
             pi_hole_positions()
                 cylinder(d = 6, h = Z_PI);
+            if (PI_MOUNT == "clip") pi_hole_positions() pi_clip_post();
         }
 
         // The columns stop at the lid.
@@ -408,9 +453,13 @@ module base() {
             translate([0, 0, Z_SEAM - 1]) cylinder(r = BAY_STEM, h = H);
         }
 
-        // Pi mounting pilots.
-        pi_hole_positions() translate([0, 0, FLOOR])
-            cylinder(d = PI_PILOT, h = Z_PI);
+        // Either the split that makes the posts springy, or the pilots for
+        // screws — not both.
+        if (PI_MOUNT == "clip")
+            pi_hole_positions() pi_clip_slot();
+        else
+            pi_hole_positions() translate([0, 0, FLOOR])
+                cylinder(d = PI_PILOT, h = Z_PI);
 
         // The rear opening. It serves the Pi's port edge low down and the
         // array's own sockets at the top, which stand at the very rim of

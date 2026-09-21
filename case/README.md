@@ -7,8 +7,9 @@ array as a ceiling above it with its microphones and lights facing up.
     ./case/build.sh              base.3mf and lid.3mf
     ./case/build.sh --preview    ...and PNGs to look at first
 
-Two parts, no supports, no AMS, no adapters. **The lid drops on and turns
-fifteen degrees to lock** — the case itself needs no fasteners at all. Open
+Two parts, no supports, no AMS, no adapters and **no fasteners of any
+kind**: the lid turns fifteen degrees to lock and the Pi clips onto four
+posts. Nothing to buy but the plastic and the leads. Open
 `case/speaker-case.scad` to change anything; every dimension is named at
 the top of the file.
 
@@ -111,8 +112,6 @@ the lights and microphones are aimed into the Pi.
 
 ## What you need besides the plastic
 
-- 4 × M2.5 × 6 self-tapping screws for the Pi. The only fasteners in the
-  build — the lid is a bayonet and takes none.
 - 4 × Ø10 mm stick-on silicone feet, about 2 mm thick
 - A USB-C to USB-A lead for the array, 20 cm or so. Straight plugs are fine.
 - A 3.5 mm lead from the array to the speaker
@@ -169,8 +168,9 @@ Nothing in either part bridges more than 4 mm.
 ## Assembly
 
 1. Four silicone feet into the recesses in the underside of the base.
-2. Pi into the base on its four standoffs, ports facing the rear opening,
-   M2.5 screws.
+2. Pi onto the four posts, ports facing the rear opening. Line the
+   mounting holes up over the cones and press it straight down until all
+   four click.
 3. Plug the array's lead into a blue USB 3.0 port and into the array. Plug
    the 3.5 mm lead in and feed it out of the rear opening.
 4. Drop the array into the base, **microphones and LEDs facing up**, sockets
@@ -178,6 +178,42 @@ Nothing in either part bridges more than 4 mm.
 5. Lid on, with its pip against the **anticlockwise** one of the two pips
    on the base. Then turn it **clockwise**, about fifteen degrees, until it
    stops. Shut, the two pips line up.
+
+## The Pi clips on
+
+Four posts stand on the standoffs, one through each of the Pi's mounting
+holes. Each is split down the middle so its two halves can squeeze
+together, with a hook on top that springs out again over the board.
+
+    press down                       held
+      ___                          _/   \_
+     /   \   <- cone spreads      |  hook | <- 0.45 mm of grip
+    |     |     the halves        ===========  the board
+    |  |  |                        |  |  |
+    |  |  | <- the split           |  |  | <- 6 mm of flexure
+    ===============================================
+
+**The split is the design, not a detail.** Each half is a cantilever, and
+the strain where it meets the standoff is `3·t·δ / 2·L²` — thickness,
+deflection, and length squared. Length squared is what matters:
+
+| hook | must bend | grips | strain at the root |
+|---|---|---|---|
+| 0.4 mm | 0.25 mm | 0.25 mm | 0.8% |
+| **0.6 mm** | **0.45 mm** | **0.45 mm** | **1.4%** |
+| 0.9 mm | 0.75 mm | 0.75 mm | 2.3% — too much |
+
+PLA yields somewhere around 2 to 3%, so 0.6 mm leaves real margin. The same
+hook on a 4 mm split would be 2.6% and would crack on the first push, which
+is why the split runs 6 mm down into the standoff — and why it stops a
+millimetre short of the underside, so it never becomes a hole in the floor.
+
+A Pi 4 weighs 46 grams. 0.45 mm of hook is plenty.
+
+**To get it out again**, squeeze the two halves of each post together with
+a fingernail or tweezers and lift that corner. Prefer screws? Set
+`PI_MOUNT = "screw"` at the top of `speaker-case.scad` and the posts become
+2.4 mm pilots for four M2.5 × 6 again.
 
 ## The lid is a bayonet
 
