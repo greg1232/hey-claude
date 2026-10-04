@@ -20,6 +20,7 @@ import config
 import dashboard
 import enroll
 import lights
+import music
 import rescue
 import sounds
 import stt
@@ -39,6 +40,7 @@ def run_voice_mode() -> None:
     sounds.start()  # Watches the clock on anything left playing.
     dashboard.start()  # A page to look at, from a browser on this network.
     rescue.start()  # ...and an access point of its own if there isn't one.
+    music.start()  # Notices if it stops being a Spotify speaker.
     stt.warm_up()  # Load the speech model now so the first question is fast.
     tts.warm_up()  # ...and the voice, so the first answer is too.
     waker = wake.make_waker()

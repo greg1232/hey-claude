@@ -235,6 +235,15 @@ def speaker_state() -> dict:
     except Exception:
         out["microphone"] = None
 
+    # Whether it is still a Spotify speaker. librespot can be running and
+    # useless, and nothing else here would show the difference.
+    try:
+        import music
+        out["spotify"] = {"visible": music._visible,
+                          "said": music._health} if music.ready() else None
+    except Exception:
+        out["spotify"] = None
+
     try:
         import books
         book = books._reader

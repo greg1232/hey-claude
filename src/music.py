@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 import config
 import sounds
@@ -161,6 +162,135 @@ def _speaker_id() -> str | None:
         if device["name"].strip().lower() == wanted:
             return device["id"]
     return None
+
+
+# --- noticing when it has quietly stopped being a speaker -------------------
+#
+# librespot can be running and useless, and systemd cannot tell. It sat for
+# five days reporting active with its last word being "Connection to server
+# closed", no sockets open and no processor used, while `Restart=always`
+# never fired — because that only fires when a process *exits*, and this one
+# did not. From the outside the only way to know is to ask Spotify whether
+# the speaker exists.
+#
+# There is a second way to lose it that a restart does not fix. librespot
+# caches whoever last connected to it, so when somebody else's phone picks
+# this speaker, it is logged into their account from then on — and the
+# account the speaker searches with can no longer see it. That happened
+# here on the 9th of September and was invisible until somebody asked for a
+# song. The two faults look identical from `_speaker_id()`, so the check
+# below tells them apart before acting, because restarting librespot cures
+# the first and does nothing at all for the second.
+
+CREDENTIALS = Path.home() / ".cache" / "librespot" / "credentials.json"
+
+_missing_since = 0.0
+_last_restart = 0.0
+# The last thing the watcher found, for anybody who wants to show it. Held
+# rather than asked for: the dashboard redraws every five seconds and this
+# answer costs a call to Spotify.
+_health = "not checked yet"
+_visible = None
+
+
+def logged_in_as() -> str:
+    """The account librespot cached, which is not necessarily ours."""
+    try:
+        return json.loads(CREDENTIALS.read_text()).get("username", "")
+    except Exception:
+        return ""
+
+
+def health() -> dict:
+    """Whether this speaker can actually be played to, and why not.
+
+    `visible` is the only question that matters — everything else is here
+    to explain a no.
+    """
+    out = {"configured": ready(), "visible": False, "said": _health,
+           "account": "", "librespot_account": logged_in_as()}
+    if not ready():
+        out["said"] = "no Spotify set up"
+        return out
+    try:
+        out["account"] = _call("GET", "/me").get("id", "")
+        out["visible"] = _speaker_id() is not None
+    except Exception as error:
+        out["said"] = f"couldn't ask Spotify ({type(error).__name__})"
+        return out
+
+    if out["visible"]:
+        out["said"] = "on Spotify"
+    elif out["librespot_account"] and out["account"] \
+            and out["librespot_account"] != out["account"]:
+        out["said"] = ("librespot is signed in to a different Spotify "
+                       "account — open Spotify and pick "
+                       f"{config.SPOTIFY_DEVICE} once")
+    else:
+        out["said"] = "not showing up on Spotify"
+    return out
+
+
+def _restart_librespot() -> bool:
+    import subprocess
+    try:
+        done = subprocess.run(
+            ["systemctl", "--user", "restart", "librespot"],
+            capture_output=True, text=True, timeout=30)
+        return done.returncode == 0
+    except Exception:
+        return False
+
+
+def _watch() -> None:
+    global _missing_since, _last_restart, _health, _visible
+    # Look shortly after starting rather than waiting out a whole interval,
+    # so the dashboard is not saying "not checked yet" for the first five
+    # minutes of every boot. The sleep stays at the top of the loop because
+    # every `continue` below relies on it.
+    wait = 20.0
+    while True:
+        time.sleep(wait)
+        wait = config.MUSIC_WATCH_EVERY
+        try:
+            state = health()
+            _health = state["said"]
+            _visible = state["visible"]
+            if state["visible"] or not state["configured"]:
+                _missing_since = 0.0
+                continue
+
+            if state["librespot_account"] and state["account"] \
+                    and state["librespot_account"] != state["account"]:
+                # Restarting would just sign it back in as the wrong person.
+                # Say so once in a while instead, and leave it alone.
+                if time.time() - _last_restart > 3600:
+                    _last_restart = time.time()
+                    print(f"[music] {state['said']}")
+                continue
+
+            if not _missing_since:
+                _missing_since = time.time()
+                continue
+            waited = time.time() - _missing_since
+            if waited < config.MUSIC_WATCH_PATIENCE * 60:
+                continue
+            if time.time() - _last_restart < config.MUSIC_WATCH_PATIENCE * 60:
+                continue
+            _last_restart = time.time()
+            print(f"[music] not on Spotify for {waited / 60:.0f} min — "
+                  f"restarting librespot")
+            _restart_librespot()
+            _missing_since = 0.0
+        except Exception as error:
+            print(f"[music] {type(error).__name__}: {error}")
+
+
+def start() -> None:
+    """Keep an eye on whether this is still a Spotify speaker."""
+    if not config.MUSIC_WATCH or not ready():
+        return
+    threading.Thread(target=_watch, daemon=True).start()
 
 
 # --- getting out of the way -------------------------------------------------

@@ -260,6 +260,15 @@ SPOTIFY_CLIENT_ID = _get("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = _get("SPOTIFY_CLIENT_SECRET", "")
 SPOTIFY_REFRESH_TOKEN = _get("SPOTIFY_REFRESH_TOKEN", "")
 
+# librespot can run perfectly while being no use at all — see src/music.py.
+# So the speaker asks Spotify every so often whether it can still be played
+# to, and restarts librespot if it cannot. Minutes, because this costs an
+# API call and the failure it catches lasted five days before anybody
+# noticed.
+MUSIC_WATCH = _get("MUSIC_WATCH", "on").lower() not in ("off", "0", "false", "no")
+MUSIC_WATCH_EVERY = float(_get("MUSIC_WATCH_EVERY", "300"))
+MUSIC_WATCH_PATIENCE = float(_get("MUSIC_WATCH_PATIENCE", "10"))
+
 # What the Pi calls itself in the Spotify app's device list.
 SPOTIFY_DEVICE = _get("SPOTIFY_DEVICE", "Claude Speaker")
 

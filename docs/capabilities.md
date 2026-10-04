@@ -173,6 +173,36 @@ Spotify app's device list.
 
 `music_volume` changes only the music, not how loud the speaker talks.
 
+### It checks it is still a Spotify speaker
+
+librespot can be running and useless, and systemd cannot tell the
+difference. It sat here for five days reporting `active (running)` with its
+last words being *"Connection to server closed"* — no sockets, no processor
+— while `Restart=always` never fired, because that only fires when a
+process *exits* and this one did not.
+
+So every `MUSIC_WATCH_EVERY` (300 s) the speaker asks Spotify whether it
+can still be played to, and after `MUSIC_WATCH_PATIENCE` (10 min) of not
+being there it restarts librespot and says so:
+
+    [music] not on Spotify for 11 min — restarting librespot
+
+**There is a second way to lose it that a restart does not fix.** librespot
+signs in as whoever last connected to it, so when somebody else's phone
+picks this speaker, it is on their account from then on — and the account
+the speaker searches with can no longer see it. That happened here, and was
+invisible until a song was asked for. The check tells the two apart before
+acting, because restarting would just sign it back in as the wrong person:
+
+    [music] librespot is signed in to a different Spotify account —
+            open Spotify and pick Claude Speaker once
+
+Doing that is the cure; it caches the new account and sticks. The dashboard
+carries the same answer under `spotify`, which is the only place the
+difference shows without asking for a song and being told no.
+
+`MUSIC_WATCH=off` turns the checking off.
+
 ## Easter eggs
 
 Ten of them, in `src/eggs.py`, from Groot to Mark Rober. They are meant to
