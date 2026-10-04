@@ -353,6 +353,11 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_known, weight,
     # What had changed that day was sixty labels on old clips. Rows are
     # not the unit of new information here; answers are.
     since = str(old["fitted_at"]) if "fitted_at" in old.files else ""
+    # Before `human` is narrowed below, keep the whole of it. Judging a new
+    # model and choosing its operating point are different questions and
+    # want different data: the first wants rows neither model has seen, the
+    # second wants as many as can be had.
+    everyone = human.copy()
     fresh = human & (log_known > since) if since else human
     seen_by_old = bool(since)
     if int(fresh.sum()) >= LEAST_TO_JUDGE and len(set(log_y[fresh])) > 1:
@@ -456,7 +461,6 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_known, weight,
     # refit came out at 47% recall against 87% and was refused on that
     # basis, which was a comparison of two settings rather than of two
     # models.
-    global _chosen
     got = {}
     positives = int(real.sum())
     say(f"  on {int(held.sum())} {on}:")
@@ -482,8 +486,6 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_known, weight,
             f"ones, and still fires on {fired:5.1%} of the mistakes")
         if apart:
             say(f"           {apart.strip()}")
-        if name == "after":
-            _chosen = line
 
     # And the shape of the choice, because the budget above is a judgement
     # about how much television is worth how much of a child being heard,
@@ -494,6 +496,36 @@ def _worth_having(bank_X, bank_y, log_X, log_y, log_kind, log_known, weight,
         caught = float((p[real] >= line).mean()) if real.any() else 0.0
         fired = float((p[~real] >= line).mean()) if (~real).any() else 0.0
         say(f"      {line:5.3f}  catches {caught:5.0%}  fires on {fired:5.1%}")
+
+    # Where the line actually goes.
+    #
+    # Not from the rows above. Judging wants data neither model has seen,
+    # which on a good night is a few dozen firings — and a few dozen is not
+    # enough to place a threshold on. One clip was 11% of the mistakes in
+    # that slice, and it moved the line from 0.800 to 0.825; the same code
+    # could as easily have landed on 0.95, where being called across a room
+    # is heard half the time. The sweep reported 0.0% fired on at 0.825,
+    # and the honest figure over everything a person has vouched for was
+    # 6.6%.
+    #
+    # So the line is chosen out-of-fold over every human label there is,
+    # which costs one more set of folds — a few seconds, once a night —
+    # and is the same machinery train/evaluate.py uses to measure it.
+    global _chosen
+    _chosen = _best_threshold(scores["after"], real)[0]
+    wide = (_out_of_fold(bank_X, bank_y, log_X, log_y, log_kind, weight,
+                         everyone)
+            if int(everyone.sum()) > int(held.sum()) else None)
+    if wide is not None and len(set(log_y[everyone])) > 1:
+        wide_real = log_y[everyone] == 1
+        line, caught, fired = _best_threshold(wide, wide_real)
+        _chosen = line
+        say(f"    the line, chosen on all {int(everyone.sum())} a person has "
+            f"vouched for rather than the {int(held.sum())} above: "
+            f"{line:.3f}, catching {caught:.0%} and firing on {fired:.1%}")
+    else:
+        say(f"    the line stays on the {int(held.sum())} above — there is "
+            "nothing wider to use")
 
     was, now = got["before"], got["after"]
     # Room to move, because these are small samples and a model that is

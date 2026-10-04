@@ -69,7 +69,13 @@ def fit(X, y, weights, recipe=None):
                               alpha=1.0, random_state=0)
         model.fit(scaler.transform(X), y)   # no sample weights in sklearn's
         return scaler, model
-    model = LogisticRegression(max_iter=5000, C=recipe.get("C", 0.1),
+    # The default has to be whatever relearn.py actually ships, or this
+    # measures a speaker nobody owns. It said 0.1 long after the recipe
+    # moved to 0.001 — a hundred times looser — and the curve it drew was
+    # not the curve the Pi was running: 8.0% fired on at 0.800 where the
+    # shipped recipe does 0.0%.
+    model = LogisticRegression(max_iter=5000,
+                               C=recipe.get("C", relearn.FIT_HELD_BACK),
                                class_weight="balanced")
     model.fit(scaler.transform(X), y, sample_weight=weights)
     return scaler, model
