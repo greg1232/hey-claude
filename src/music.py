@@ -164,6 +164,96 @@ def _speaker_id() -> str | None:
     return None
 
 
+# --- taking the speaker back when somebody has borrowed it -----------------
+#
+# Spotify Connect is one account per device, so a guest picking this
+# speaker in their own app does not play alongside us — it signs librespot
+# in as them, and the account the speaker searches with can no longer see
+# the device at all.
+#
+# The fix is lazy on purpose. Nothing patrols for this and nothing snatches
+# the speaker back on a timer: a guest keeps it for as long as nobody in
+# the room asks for anything. The moment somebody says "play ...", we take
+# it back, because their music was already coming out of this speaker in
+# this room — whoever is standing in front of it has the better claim.
+#
+# Measured on this Pi: restarting librespot and waiting for the device to
+# be playable again takes 1.4 to 1.6 seconds, which is less than the
+# speaker spends transcribing the question that asked for it.
+
+OWNER = Path(__file__).resolve().parent.parent / "state" / "spotify-owner.json"
+
+
+def _owner_account() -> str:
+    """Whose speaker this is: the account the refresh token belongs to.
+
+    Nothing to configure. This is already the account that has to own
+    librespot for any of it to work, so it can define itself.
+    """
+    try:
+        return _call("GET", "/me").get("id", "")
+    except Exception:
+        return ""
+
+
+def _remember_how_to_come_back() -> None:
+    """Keep a copy of librespot's credentials while they are still ours.
+
+    Kept in state/ rather than beside the code, because deploy mirrors the
+    project directory and would delete it — the same reason enrolment
+    recordings live there.
+    """
+    try:
+        if logged_in_as() != _owner_account():
+            return
+        OWNER.parent.mkdir(parents=True, exist_ok=True)
+        if CREDENTIALS.exists() and (
+                not OWNER.exists()
+                or OWNER.read_bytes() != CREDENTIALS.read_bytes()):
+            OWNER.write_bytes(CREDENTIALS.read_bytes())
+            OWNER.chmod(0o600)
+    except Exception:
+        pass            # Nice to have. Never worth failing a song over.
+
+
+def claim() -> str | None:
+    """This speaker's Spotify id, taking it back first if it has wandered.
+
+    Returns None only when it genuinely cannot be had — no saved
+    credentials to go back to, or librespot will not come up.
+    """
+    mine = _speaker_id()
+    if mine:
+        _remember_how_to_come_back()
+        return mine
+    if not config.MUSIC_TAKE_BACK or not OWNER.exists():
+        return None
+
+    borrowed = logged_in_as()
+    print(f"[music] the speaker is signed in as {borrowed or 'nobody'} — "
+          f"taking it back")
+    try:
+        CREDENTIALS.parent.mkdir(parents=True, exist_ok=True)
+        CREDENTIALS.write_bytes(OWNER.read_bytes())
+        CREDENTIALS.chmod(0o600)
+    except Exception as error:
+        print(f"[music] couldn't put our credentials back ({error})")
+        return None
+    if not _restart_librespot():
+        return None
+
+    # It was 1.6 s at its slowest here; wait a good deal longer than that
+    # before giving up, because the alternative is telling a child no.
+    for _ in range(40):
+        time.sleep(0.5)
+        mine = _speaker_id()
+        if mine:
+            print("[music] got it back")
+            return mine
+    print("[music] it didn't come back")
+    return None
+
+
 # --- noticing when it has quietly stopped being a speaker -------------------
 #
 # librespot can be running and useless, and systemd cannot tell. It sat for
@@ -223,9 +313,12 @@ def health() -> dict:
         out["said"] = "on Spotify"
     elif out["librespot_account"] and out["account"] \
             and out["librespot_account"] != out["account"]:
-        out["said"] = ("librespot is signed in to a different Spotify "
-                       "account — open Spotify and pick "
-                       f"{config.SPOTIFY_DEVICE} once")
+        out["said"] = (
+            "somebody else's Spotify has the speaker — it will take itself "
+            "back next time anyone asks for a song"
+            if config.MUSIC_TAKE_BACK and OWNER.exists() else
+            "librespot is signed in to a different Spotify account — open "
+            f"Spotify and pick {config.SPOTIFY_DEVICE} once")
     else:
         out["said"] = "not showing up on Spotify"
     return out
@@ -435,7 +528,7 @@ def play_music(number: int) -> str:
 
     chosen = _offered[int(number) - 1]
     try:
-        device = _speaker_id()
+        device = claim()
         if device is None:
             return ("This speaker isn't showing up in Spotify. Open Spotify "
                     "on a phone and pick "

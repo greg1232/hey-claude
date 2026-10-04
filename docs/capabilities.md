@@ -187,19 +187,39 @@ being there it restarts librespot and says so:
 
     [music] not on Spotify for 11 min — restarting librespot
 
-**There is a second way to lose it that a restart does not fix.** librespot
-signs in as whoever last connected to it, so when somebody else's phone
-picks this speaker, it is on their account from then on — and the account
-the speaker searches with can no longer see it. That happened here, and was
-invisible until a song was asked for. The check tells the two apart before
-acting, because restarting would just sign it back in as the wrong person:
+**There is a second way to lose it that a restart does not fix.** Spotify
+Connect is one account per device, so a guest picking this speaker in their
+own app does not play alongside you — librespot signs in as them, and the
+account the speaker searches with can no longer see the device at all.
 
-    [music] librespot is signed in to a different Spotify account —
-            open Spotify and pick Claude Speaker once
+### It takes itself back when asked
 
-Doing that is the cure; it caches the new account and sticks. The dashboard
-carries the same answer under `spotify`, which is the only place the
-difference shows without asking for a song and being told no.
+Nothing patrols for that and nothing grabs the speaker back on a timer. A
+guest keeps it for as long as nobody in the room wants it. The moment
+somebody says **"play …"**, the speaker puts its own credentials back,
+restarts librespot and plays — because the guest's music was already coming
+out of this speaker, in this room, and whoever is standing in front of it
+has the better claim.
+
+    [music] the speaker is signed in as <someone> — taking it back
+    [music] got it back
+
+Measured here: 1.4 to 1.6 seconds to restart librespot and be playable
+again, and 2.1 seconds from asking to hearing music, search included. Less
+than the speaker spends transcribing the question.
+
+It can only do this if it has somewhere to come back to, so it keeps a copy
+of its own credentials in `state/spotify-owner.json` whenever they are
+current — in `state/` because deploy mirrors the project directory and
+would delete anything else. "Its own" needs no configuring: the owner is
+the account the refresh token belongs to, which is already the account that
+has to own librespot for any of this to work.
+
+`MUSIC_TAKE_BACK=off` leaves it to say "open Spotify and pick Claude
+Speaker once" instead, which is the only cure if there is no saved copy.
+
+The dashboard carries the same answer under `spotify`, which is the only
+place the difference shows without asking for a song and being told no.
 
 `MUSIC_WATCH=off` turns the checking off.
 

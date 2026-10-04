@@ -269,6 +269,10 @@ MUSIC_WATCH = _get("MUSIC_WATCH", "on").lower() not in ("off", "0", "false", "no
 MUSIC_WATCH_EVERY = float(_get("MUSIC_WATCH_EVERY", "300"))
 MUSIC_WATCH_PATIENCE = float(_get("MUSIC_WATCH_PATIENCE", "10"))
 
+# If a guest's phone has claimed this speaker on Spotify, take it back the
+# next time somebody in the room asks for a song. Off means say so instead.
+MUSIC_TAKE_BACK = _get("MUSIC_TAKE_BACK", "on").lower() not in ("off", "0", "false", "no")
+
 # What the Pi calls itself in the Spotify app's device list.
 SPOTIFY_DEVICE = _get("SPOTIFY_DEVICE", "Claude Speaker")
 
