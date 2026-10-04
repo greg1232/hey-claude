@@ -48,7 +48,12 @@ sys.path.insert(0, str(HERE))
 import relearn  # noqa: E402
 
 SHIPPED = HERE.parent / "models" / "hey_claude_whisper.npz"
-LINES = (0.30, 0.50, 0.70, 0.80, 0.90, 0.95, 0.975, 0.99)
+# The grid the tables are printed on. The middle of it is deliberately
+# dense around where models actually get promoted to: relearn.py picks the
+# operating point from the handful of firings held back since the last fit,
+# and the whole reason to run this is to see what that line is really worth
+# on everything a person has ever vouched for.
+LINES = (0.30, 0.50, 0.70, 0.80, 0.825, 0.85, 0.875, 0.90, 0.95, 0.975, 0.99)
 FOLDS = 5
 
 
