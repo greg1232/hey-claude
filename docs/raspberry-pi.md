@@ -2,6 +2,48 @@
 
 A laptop is a fine place to build this, but a speaker belongs on a shelf.
 
+## A new speaker
+
+    ./card.sh bedroom --flash     erase the card, write 64-bit Pi OS, set it up
+    ./card.sh bedroom             just set up a card that already has it
+    ./card.sh --find              what address it came up on
+
+Then `./deploy.sh normal@<that address>`.
+
+**It has to be the 64-bit image.** `ctranslate2`, the engine under
+faster-whisper, has no 32-bit ARM build — pip answers "from versions:
+none" — so a 32-bit card gives you no speech recognition and no wake word,
+and a deploy onto one gets as far as an empty virtualenv and stops.
+`card.sh` refuses a 32-bit card rather than letting you find that out after
+a deploy.
+
+Do not judge this by what the Pi reports. Raspberry Pi OS 32-bit boots a
+*64-bit kernel* on a Pi 4, so `uname -m` says `aarch64` and Python's
+`sysconfig` says `linux-aarch64`, while pip correctly resolves `armv7l`
+wheels. On the Pi, only `dpkg --print-architecture` is honest. From the
+card, the tell is which kernels are present:
+
+    32-bit   kernel.img  kernel7.img  kernel8.img
+    64-bit                            kernel8.img  kernel_2712.img
+
+### Why not Raspberry Pi Imager's settings
+
+They are not part of the image. Imager writes `custom.toml` **and** adds
+`init=/usr/lib/raspberrypi-sys-mods/firstboot` to `cmdline.txt`; the hook
+is what reads the file. Flash the same image any other way and the hook is
+absent and `custom.toml` is decoration.
+
+Worse, that path does not exist on these images, so adding the hook by
+hand leaves the kernel with no init and the Pi never boots — silently, if
+it has no monitor. `card.sh` refuses to proceed if it finds one.
+
+What does work: `userconf.txt` for the user, an empty `ssh` file, and
+`systemd.run=` for a first-boot script — which runs as a unit rather than
+replacing init, so a broken script costs you the script and not the
+machine. That script runs *before NetworkManager starts*, so it writes a
+`.nmconnection` file rather than calling `nmcli`, and chmods it 600 or
+NetworkManager ignores it.
+
 ## Deploying
 
 ```bash

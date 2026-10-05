@@ -1,8 +1,13 @@
 """Make an SD card that boots into a speaker you can reach.
 
     ./card.sh bedroom            prepare the card that's plugged in
+    ./card.sh bedroom --flash    ...erasing it and writing 64-bit Pi OS first
     ./card.sh bedroom --password hunter2
     ./card.sh --find             what new Pi turned up on the network
+
+It refuses a 32-bit card. That is not fussiness: ctranslate2, the engine
+under faster-whisper, has no 32-bit ARM build, so a speaker on one has no
+speech recognition and no wake word. --flash will put the right image on.
 
 Flash Raspberry Pi OS onto a card however you like — Imager, dd, anything —
 then run this with the card in the laptop. It writes the three files the Pi
@@ -70,6 +75,122 @@ def boot_partition() -> Path:
                          "\n  ".join(str(p) for p in seen) +
                          "\n\nEject all but the one you mean.")
     return seen[0]
+
+
+# The speaker needs ctranslate2, the engine under faster-whisper, and
+# there is no 32-bit ARM build of it — pip says "from versions: none".
+# No speech recognition, no wake word, nothing. So the architecture is not
+# a preference here, it is the difference between a speaker and a brick.
+#
+# Telling the two apart from the boot partition alone, which is the only
+# half macOS can read: the 32-bit image ships the 32-bit kernels beside
+# the 64-bit one, and the 64-bit image does not ship them at all.
+#
+#   32-bit   kernel.img  kernel7.img  kernel8.img
+#   64-bit                            kernel8.img  kernel_2712.img
+#
+# Do not try to judge this by the kernel the Pi is running. Raspberry Pi
+# OS 32-bit boots a 64-bit kernel on a Pi 4, so `uname -m` says aarch64
+# and Python's sysconfig says linux-aarch64 while pip is correctly
+# resolving armv7l wheels. Three answers, two of them misleading. On the
+# Pi itself only `dpkg --print-architecture` is honest.
+THIRTY_TWO_BIT = ("kernel.img", "kernel7.img", "kernel7l.img")
+
+IMAGES = {
+    "desktop": "https://downloads.raspberrypi.com/raspios_arm64_latest",
+    "lite": "https://downloads.raspberrypi.com/raspios_lite_arm64_latest",
+}
+
+
+def architecture(boot: Path) -> str:
+    """"arm64" or "armhf", from the boot partition alone."""
+    if any((boot / k).is_file() for k in THIRTY_TWO_BIT):
+        return "armhf"
+    return "arm64" if (boot / "kernel8.img").is_file() else "unknown"
+
+
+def card_disk() -> str:
+    """The external, physical, removable disk the card is on.
+
+    Deliberately fussy. This hands a device node to `dd`, and the failure
+    mode of getting it wrong is the laptop.
+    """
+    plist = subprocess.run(["diskutil", "list", "-plist", "external",
+                            "physical"], capture_output=True, text=True)
+    import plistlib
+    disks = plistlib.loads(plist.stdout.encode()).get("WholeDisks", [])
+    if not disks:
+        raise SystemExit(
+            "No external disk is plugged in. Put the card in and try again.")
+    if len(disks) > 1:
+        raise SystemExit(
+            "More than one external disk is plugged in:\n  " +
+            "\n  ".join("/dev/" + d for d in disks) +
+            "\n\nUnplug the others. This writes an image with dd and will "
+            "not guess.")
+    name = disks[0]
+    info = subprocess.run(["diskutil", "info", "-plist", name],
+                          capture_output=True, text=True)
+    d = plistlib.loads(info.stdout.encode())
+    if d.get("Internal") or not d.get("Removable", d.get("RemovableMedia")):
+        raise SystemExit(f"/dev/{name} does not look removable. Not touching it.")
+    size = d.get("TotalSize", 0)
+    if size > 128 * 10**9:
+        raise SystemExit(
+            f"/dev/{name} is {size / 10**9:.0f} GB, which is bigger than any "
+            "card\nthis is meant for. Refusing in case it is a backup drive.")
+    say(f"  disk      /dev/{name}  —  {d.get('MediaName', '?')}, "
+        f"{size / 10**9:.1f} GB")
+    return name
+
+
+def flash(which: str, yes: bool) -> None:
+    """Put a 64-bit Raspberry Pi OS on the card. Destroys what is there."""
+    if not sys.stdin.isatty() and not yes:
+        raise SystemExit(
+            "Writing an image needs sudo, and sudo needs a terminal.\n"
+            "Run this one from a terminal:  ./card.sh <name> --flash")
+    disk = card_disk()
+    cache = Path.home() / ".cache" / "claude-speaker-images"
+    cache.mkdir(parents=True, exist_ok=True)
+    image = cache / f"raspios-{which}-arm64.img.xz"
+
+    if not image.is_file() or image.stat().st_size < 100 * 10**6:
+        say(f"  downloading the 64-bit {which} image (a gigabyte or two)")
+        got = subprocess.run(["curl", "-fL", "--retry", "3", "-C", "-",
+                              "-o", str(image), IMAGES[which]])
+        if got.returncode != 0:
+            raise SystemExit("Download failed.")
+    else:
+        say(f"  using the image already in {cache}")
+
+    if not yes:
+        say("")
+        say(f"  This ERASES /dev/{disk} completely.")
+        if input("  Type the disk name to go ahead: ").strip() != disk:
+            raise SystemExit("  Nothing written.")
+
+    subprocess.run(["diskutil", "unmountDisk", f"/dev/{disk}"], check=True)
+    say("  writing — several minutes, and it will look like nothing is "
+        "happening")
+    piped = subprocess.Popen(["xz", "-dc", str(image)],
+                             stdout=subprocess.PIPE)
+    wrote = subprocess.run(["sudo", "dd", f"of=/dev/r{disk}", "bs=4m"],
+                           stdin=piped.stdout)
+    piped.wait()
+    if wrote.returncode != 0:
+        raise SystemExit("dd failed.")
+    subprocess.run(["sync"])
+    say("  written. Waiting for it to mount again...")
+    import time
+    for _ in range(30):
+        time.sleep(2)
+        try:
+            return boot_partition() and None
+        except SystemExit:
+            continue
+    raise SystemExit("The card did not come back. Re-seat it and run again "
+                     "without --flash.")
 
 
 def a_password() -> str:
@@ -267,6 +388,12 @@ def main() -> int:
     parser.add_argument("--ssid", default="")
     parser.add_argument("--psk", default="")
     parser.add_argument("--country", default="US")
+    parser.add_argument("--flash", action="store_true",
+                        help="erase the card and write 64-bit Raspberry Pi OS")
+    parser.add_argument("--lite", action="store_true",
+                        help="with --flash, the Lite image rather than desktop")
+    parser.add_argument("--yes", action="store_true",
+                        help="with --flash, do not ask before erasing")
     parser.add_argument("--find", action="store_true",
                         help="scan for a Pi that has just booted")
     args = parser.parse_args()
@@ -281,8 +408,23 @@ def main() -> int:
     if not args.name:
         parser.error("what should it be called? e.g. ./card.sh bedroom")
 
+    if args.flash:
+        flash("lite" if args.lite else "desktop", args.yes)
+
     boot = boot_partition()
     say(f"  card      {boot}")
+    arch = architecture(boot)
+    if arch != "arm64":
+        raise SystemExit(
+            f"\nThis card has the {arch} image on it, and the speaker cannot "
+            "run on it.\n\n"
+            "faster-whisper needs ctranslate2, which has no 32-bit ARM build "
+            "at all —\nno speech recognition and no wake word. A deploy onto "
+            "it gets as far as\nmaking an empty virtualenv and stops.\n\n"
+            "Flash the 64-bit image. This can do it for you, from a "
+            "terminal:\n\n"
+            f"    ./card.sh {args.name} --flash\n")
+    say(f"  image     64-bit, which is the one that works")
 
     ssid, psk = args.ssid, args.psk
     if not ssid:
