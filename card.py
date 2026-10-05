@@ -296,13 +296,22 @@ chmod 600 /etc/NetworkManager/system-connections/{ssid}.nmconnection
 echo {name} > /etc/hostname
 sed -i "s/127.0.1.1.*/127.0.1.1\\t{name}/" /etc/hosts || true
 
-# The key, because custom.toml's authorized_keys never runs on this image.
-install -d -m 700 -o {user} -g {user} /home/{user}/.ssh
-cat > /home/{user}/.ssh/authorized_keys <<'KEY'
+# The key. This runs before userconf.txt has made the user — that service
+# starts on the normal boot, and this is kernel-command-line.target — so
+# writing straight to /home/{user} fails with "invalid user". /etc/skel is
+# copied into a home directory when it is created, so leaving it there
+# gets it in anyway, working with the ordering instead of against it.
+install -d -m 700 /etc/skel/.ssh
+cat > /etc/skel/.ssh/authorized_keys <<'KEY'
 {key}
 KEY
-chown {user}:{user} /home/{user}/.ssh/authorized_keys
-chmod 600 /home/{user}/.ssh/authorized_keys
+chmod 600 /etc/skel/.ssh/authorized_keys
+# And directly too, for the case where the user is already there.
+if id {user} >/dev/null 2>&1; then
+  install -d -m 700 -o {user} -g {user} /home/{user}/.ssh
+  install -m 600 -o {user} -g {user} /etc/skel/.ssh/authorized_keys \
+          /home/{user}/.ssh/authorized_keys
+fi
 
 rfkill unblock wifi || true
 raspi-config nonint do_wifi_country {country} || true
@@ -354,6 +363,40 @@ def prepare(boot: Path, name: str, user: str, password: str,
         stale.unlink()
 
 
+def subnets() -> list[str]:
+    """The /24s worth scanning, from this laptop's own address and mask.
+
+    Hardcoding 192.168.4 and .5 missed a Pi once: the network here is a
+    /22, so DHCP can hand out anything up to 192.168.7.254, and a scan
+    that stops at .5 reports a working speaker as absent.
+    """
+    import ipaddress
+    out = []
+    listed = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
+    for line in listed.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0] != "inet" or parts[1].startswith("127."):
+            continue
+        try:
+            mask = int(parts[3], 16) if parts[3].startswith("0x") else None
+            if mask is None:
+                continue
+            net = ipaddress.ip_network(f"{parts[1]}/{bin(mask).count('1')}",
+                                       strict=False)
+        except Exception:
+            continue
+        if net.num_addresses > 4096:       # a /20 or wider is not worth it
+            continue
+        out += sorted({".".join(str(ip).split(".")[:3])
+                       for ip in (net.network_address,
+                                  net.broadcast_address)})
+        first = int(str(net.network_address).split(".")[2])
+        last = int(str(net.broadcast_address).split(".")[2])
+        head = ".".join(str(net.network_address).split(".")[:2])
+        out = [f"{head}.{n}" for n in range(first, last + 1)]
+    return out or ["192.168.4"]
+
+
 def find(known: set[str]) -> None:
     """Which Pi just turned up.
 
@@ -371,16 +414,19 @@ def find(known: set[str]) -> None:
         except OSError:
             return None
 
-    here = [f"192.168.{net}.{host}" for net in (4, 5) for host in range(1, 255)]
+    here = [f"{base}.{host}" for base in subnets() for host in range(1, 255)]
     with concurrent.futures.ThreadPoolExecutor(max_workers=256) as pool:
         up = [ip for ip in pool.map(open22, here) if ip]
-    fresh = [ip for ip in up if ip not in known]
-    say("  hosts with ssh: " + (", ".join(up) or "none"))
-    if fresh:
-        say("  new since you last looked: " + ", ".join(fresh))
-    else:
-        say("  nothing new. Give it a minute — it writes its config, then "
-            "reboots.")
+    say(f"  scanned {', '.join(s + '.x' for s in subnets())}")
+    for ip in up:
+        who = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
+             "-o", "StrictHostKeyChecking=accept-new", f"normal@{ip}",
+             "hostname"], capture_output=True, text=True).stdout.strip()
+        mark = "" if ip in known else "   <- not one I knew about"
+        say(f"    {ip:16} {who or '(no key for it yet)'}{mark}")
+    if not up:
+        say("    nothing with ssh open yet — give it two or three minutes")
 
 
 def main() -> int:
