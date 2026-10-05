@@ -322,6 +322,27 @@ ls -l /usr/sbin/NetworkManager /usr/bin/nmcli
 ls /sys/class/net/
 ls -l /etc/NetworkManager/system-connections/
 
+# Everything above happens before NetworkManager exists, so none of it can
+# say whether NetworkManager liked any of it. This unit runs after it, on
+# the normal boot, and writes what it finds somewhere a laptop can read —
+# which is the only way to see the half of the problem that matters when
+# the Pi has no screen and never reaches the network.
+cat > /etc/systemd/system/claude-netdebug.service <<'UNIT'
+[Unit]
+Description=Write down what the network actually did
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 25
+ExecStart=/bin/bash -c '{{ date; echo "--- devices ---"; nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device; echo "--- connections ---"; nmcli -t -f NAME,TYPE,AUTOCONNECT,ACTIVE connection show; echo "--- what it can see ---"; nmcli -t -f SSID,SIGNAL,CHAN device wifi list; echo "--- radio ---"; rfkill list; iw reg get 2>&1 | head -4; echo "--- address ---"; ip -4 addr show wlan0; echo "--- NetworkManager said ---"; journalctl -u NetworkManager --no-pager -n 60; }} > /boot/firmware/net-debug.txt 2>&1; sync'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable claude-netdebug.service
+
 cp /boot/firmware/cmdline.txt.backup /boot/firmware/cmdline.txt
 sync
 echo DONE
@@ -336,16 +357,30 @@ def prepare(boot: Path, name: str, user: str, password: str,
             ssid: str, psk: str, country: str) -> None:
     # cmdline.txt has to stay a single line, and the script puts this copy
     # back at the end so it only ever runs once.
+    import re
     cmdline = boot / "cmdline.txt"
     backup = boot / "cmdline.txt.backup"
-    if not backup.is_file():
-        shutil.copy2(cmdline, backup)
-    line = backup.read_text().strip()
+
+    # Always rebuild from what is on the card now, with any hook of ours
+    # stripped — never from a backup written on a previous run. Reusing a
+    # stale backup put the pristine pre-first-boot line back, and that
+    # line still had `resize` in it.
+    line = cmdline.read_text().strip()
+    line = re.sub(r"\s*systemd\.(run|unit)\S*", "", line).strip()
     if "init=" in line:
         raise SystemExit(
-            f"{backup} already has an init= hook in it. That is the thing\n"
-            "that stops this image booting — take it out before going on.")
-    cmdline.write_text(line + " " + RUN_HOOK + "\n")
+            f"{cmdline} has an init= hook in it. That is the thing that\n"
+            "stops this image booting — take it out before going on.")
+
+    # `resize` grows the filesystem on first boot and is consumed doing it.
+    # It must not share a command line with the hook: asking for a minimal
+    # target and a resize at once leaves firstrun.sh never starting at all,
+    # with nothing written down to say why. So the hook runs without it,
+    # and the line restored afterwards keeps it, which does the resize on
+    # the reboot instead.
+    hooked = re.sub(r"\s+resize\b", "", line)
+    backup.write_text(line + "\n")
+    cmdline.write_text(hooked + " " + RUN_HOOK + "\n")
 
     (boot / "userconf.txt").write_text(f"{user}:{hashed(password)}\n")
     os.chmod(boot / "userconf.txt", 0o600)
