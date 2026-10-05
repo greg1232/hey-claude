@@ -125,6 +125,37 @@ def _turn_pipewire_up(level: str) -> None:
         pass  # No wpctl. Not worth failing over.
 
 
+def volume() -> int | None:
+    """How loud the speaker is now, 0 to 100, or None if it cannot tell.
+
+    PipeWire's sink, not the card. turn_up() sets the card once at startup
+    to undo the array arriving 23 dB down, and that is a calibration
+    rather than a setting — leaving it alone means there is exactly one
+    gain stage anybody turns, which is the one here.
+    """
+    try:
+        said = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                              capture_output=True, text=True, timeout=5)
+    except OSError:
+        return None
+    for word in said.stdout.split():
+        try:
+            return int(round(float(word) * 100))
+        except ValueError:
+            continue
+    return None
+
+
+def set_volume(percent) -> int | None:
+    """Set it, and report back what it actually became."""
+    try:
+        want = max(0, min(100, int(float(percent))))
+    except (TypeError, ValueError):
+        return None
+    _turn_pipewire_up(f"{want}%")
+    return volume()
+
+
 def _output_card() -> str | None:
     """The ALSA card number to turn up, for amixer to talk to.
 

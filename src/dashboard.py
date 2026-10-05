@@ -235,6 +235,12 @@ def speaker_state() -> dict:
     except Exception:
         out["microphone"] = None
 
+    try:
+        import tts
+        out["volume"] = tts.volume()
+    except Exception:
+        out["volume"] = None
+
     # Whether it is still a Spotify speaker. librespot can be running and
     # useless, and nothing else here would show the difference.
     try:
@@ -606,6 +612,14 @@ def do(what: str, value: str) -> dict:
             return {"said": sounds.play(value, config.SOUND_HOURS)
                     if value else sounds.stop()}
         if what == "volume":
+            import tts
+            now = tts.set_volume(value)
+            return {"said": "" if now is None else f"Volume {now}%.",
+                    "volume": now}
+        if what == "music":
+            # Spotify's own level, which is separate: turning the speaker
+            # down should not change what the music is set to when it
+            # comes back up.
             import music
             return {"said": music.music_volume(value)}
         if what == "timer":
@@ -734,6 +748,10 @@ button.act:hover{background:#8881}
 input{font:inherit;padding:.5rem .6rem;border-radius:9px;width:100%;
   border:1px solid var(--edge);background:transparent;color:inherit}
 label{display:block;font-size:.8rem;color:var(--dim);margin:.6rem 0 .2rem}
+input[type=range]{width:100%;accent-color:var(--ink);height:1.6rem;
+  background:none;cursor:pointer}
+.vol{display:flex;align-items:center;gap:.8rem;margin-top:.3rem}
+.vol b{min-width:3.2rem;text-align:right;font-variant-numeric:tabular-nums}
 .said{margin-top:.75rem;font-size:.88rem}
 .net{display:flex;justify-content:space-between;align-items:center;
   padding:.4rem 0;border-bottom:1px solid var(--edge);cursor:pointer}
@@ -889,6 +907,11 @@ function overTime(points, unit, floor, ceil){
     `</svg>`;
 }
 
+// When the volume slider was last touched. The page redraws every five
+// seconds and rebuilds its own HTML, which would otherwise snatch the
+// slider back to wherever the Pi last said it was, mid-drag.
+let adjusting = 0;
+
 async function draw(){
   if(tab==='speaker') return drawSpeaker();
   if(tab==='system') return drawSystem();
@@ -913,6 +936,14 @@ async function drawSpeaker(){
       <button class=act onclick="act('sound','')">Silence</button>
       <button class=act onclick="act('timer','5')">5 min timer</button>
       <button class=act onclick="act('say','Hello from the dashboard')">Say hello</button>
+     </div>
+     <label>How loud it is</label>
+     <div class=vol>
+       <input id=vol type=range min=0 max=100 step=5
+              value="${d.volume==null?70:d.volume}"
+              oninput="adjusting=Date.now();document.getElementById('volshow').textContent=this.value+'%'"
+              onchange="adjusting=Date.now();act('volume',this.value)">
+       <b id=volshow>${d.volume==null?'—':d.volume+'%'}</b>
      </div><div class=said id=said></div></div>`+
 
    (d.timers.length?`<div class=card><h2>Timers and alarms</h2>`+
@@ -1058,7 +1089,9 @@ async function forget(name){
 }
 
 draw();
-setInterval(()=>{ if(tab!=='wifi') draw() }, 5000);
+setInterval(()=>{
+  if(tab!=='wifi' && Date.now()-adjusting > 4000) draw();
+}, 5000);
 </script>"""
 
 
