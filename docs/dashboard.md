@@ -40,6 +40,28 @@ A short list, deliberately:
 | `timer` | set a timer, in minutes |
 | `restart` | restart the service — it answers first, then goes away |
 
+## Wishes
+
+Everything any speaker has been asked for and cannot do, pooled across the
+house. A thing two children ask for in two rooms is a better idea than a
+thing asked for twice in one, so each wish shows how many times it came
+up, in whose words, and which speakers heard it.
+
+They live in their own dataset — `claude-speaker-wishes`, one folder per
+speaker — and deliberately not in the one with the recordings. That one is
+two second windows of a living room caught whenever the detector fired,
+and is private for good reason. This is a list of things a child asked
+for, which is a different kind of thing and the only feature request in
+this project written by the person it is for.
+
+A wish uploads as soon as it is written, from a thread, so nobody waits on
+a network round trip to be told their idea was noted. The page caches the
+pooled list for ten minutes, because it redraws every few seconds and that
+would otherwise be a download each time; if the archive cannot be read it
+shows this speaker's own wishes rather than an error.
+
+`./wishes.sh --pi bedroom` still reads one speaker's list in the terminal.
+
 ## Wi-Fi
 
 It shows the network it is on, what is in range, and **what it has saved**

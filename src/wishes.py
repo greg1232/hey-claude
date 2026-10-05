@@ -46,6 +46,85 @@ import tools
 
 WHERE = config.PROJECT_ROOT / "state" / "wishes.jsonl"
 
+# Wishes go in their own dataset, not the one with the recordings in it.
+# That one is two second windows of a living room caught whenever the
+# detector fired, and it is private for good reason. This is a list of
+# things a child asked for, which is a different kind of thing: it is the
+# only feature request in this project written by the person it is for.
+WISHES_REPO = "claude-speaker-wishes"
+
+# One folder per speaker, the same lesson as the recordings: two of them
+# uploading to the same path means whichever finishes last wins, and the
+# other's wishes are simply gone.
+_pooled: list = []
+_pooled_at = 0.0
+
+
+def _slug() -> str:
+    """This speaker's folder. Matches train/archive.py's where()."""
+    name = (config.SPEAKER_NAME or "").strip().lower()
+    return re.sub(r"[^a-z0-9_-]+", "-", name).strip("-") or "speaker"
+
+
+def archive(say=print) -> bool:
+    """Put this speaker's wishes in the shared dataset.
+
+    Called after a wish is written, from a thread, so a child never waits
+    on a network round trip to be told their idea was noted.
+    """
+    if not config.HF_TOKEN or not WHERE.exists():
+        return False
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=config.HF_TOKEN)
+        repo = f"{api.whoami()['name']}/{WISHES_REPO}"
+        api.create_repo(repo, repo_type="dataset", private=True,
+                        exist_ok=True)
+        api.upload_file(path_or_fileobj=str(WHERE),
+                        path_in_repo=f"{_slug()}/wishes.jsonl",
+                        repo_id=repo, repo_type="dataset",
+                        commit_message=f"{_slug()}: what it was asked for")
+        return True
+    except Exception as error:
+        say(f"[wishes] couldn't archive ({type(error).__name__}: {error})")
+        return False
+
+
+def everyones(max_age: float = 600) -> list[dict]:
+    """Every speaker's wishes, pooled and folded together.
+
+    Cached, because the dashboard redraws every few seconds and this is a
+    network call. Falls back to just ours if the archive cannot be read —
+    a page that shows the local list beats a page that shows an error.
+    """
+    global _pooled, _pooled_at
+    if time.monotonic() - _pooled_at < max_age and _pooled:
+        return _pooled
+    mine = read()
+    if not config.HF_TOKEN:
+        return mine
+    try:
+        from huggingface_hub import HfApi, hf_hub_download
+        api = HfApi(token=config.HF_TOKEN)
+        repo = f"{api.whoami()['name']}/{WISHES_REPO}"
+        lines = []
+        for path in api.list_repo_files(repo, repo_type="dataset"):
+            if not path.endswith("/wishes.jsonl"):
+                continue
+            who = path.split("/")[0]
+            local = hf_hub_download(repo, path, repo_type="dataset",
+                                    token=config.HF_TOKEN)
+            for line in open(local):
+                line = line.strip()
+                if line:
+                    lines.append(line[:-1] + f', "speaker": "{who}"}}'
+                                 if line.endswith("}") else line)
+        folded = read("\n".join(lines)) if lines else mine
+        _pooled, _pooled_at = folded, time.monotonic()
+        return folded
+    except Exception:
+        return mine
+
 # Enough to hold a month of a child's imagination, few enough that a
 # television repeating itself all night can't fill the card.
 MOST = 500
@@ -114,6 +193,7 @@ def make_a_wish(wish: str, asked: str = "", who: str = "") -> str:
                                    if c.isalnum())[:20],
                 }) + "\n")
             _trim()
+            threading.Thread(target=archive, daemon=True).start()
         except Exception as error:
             print(f"[wishes] {type(error).__name__}: {error}")
             return "I can't do that yet."
@@ -153,13 +233,16 @@ def read(text: str | None = None) -> list[dict]:
                 "times": 1,
                 "askeds": [row["asked"]] if row.get("asked") else [],
                 "whos": [row["who"]] if row.get("who") else [],
+                # Which speakers heard it. A thing asked for in two rooms
+                # is a better idea than a thing asked for twice in one.
+                "speakers": [row["speaker"]] if row.get("speaker") else [],
             })
             continue
 
         found["times"] += 1
         found["last"] = row.get("at", found["last"])
         found["words"] |= words
-        for field in ("asked", "who"):
+        for field in ("asked", "who", "speaker"):
             if row.get(field) and row[field] not in found[field + "s"]:
                 found[field + "s"].append(row[field])
 

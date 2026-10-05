@@ -350,6 +350,29 @@ def system_state() -> dict:
     }
 
 
+def wishes_state() -> dict:
+    """What every speaker has been asked for and cannot do.
+
+    Pooled across the house, because a thing two children ask for in two
+    rooms is a better idea than a thing asked for once — and because the
+    whole point of writing them down is that somebody reads them.
+    """
+    try:
+        import wishes
+        found = wishes.everyones()
+        return {"wishes": [
+            {"wish": w.get("wish", ""),
+             "times": w.get("times", 1),
+             "last": w.get("last", ""),
+             "askeds": w.get("askeds", [])[:3],
+             "whos": [x for x in w.get("whos", []) if x],
+             "speakers": [x for x in w.get("speakers", []) if x]}
+            for w in found[:60]], "total": len(found)}
+    except Exception as error:
+        return {"wishes": [], "total": 0,
+                "said": f"{type(error).__name__}: {error}"}
+
+
 def wifi_state(include_saved: bool = True) -> dict:
     """Which network, how strong, what else is within reach, and what it
     has credentials for.
@@ -613,6 +636,8 @@ class Pages(http.server.BaseHTTPRequestHandler):
                 return self._json(speaker_state())
             if path == "/api/system":
                 return self._json(system_state())
+            if path == "/api/wishes":
+                return self._json(wishes_state())
             if path == "/api/wifi":
                 return self._json(wifi_state())
         except Exception as error:
@@ -725,6 +750,7 @@ svg{display:block;width:100%;height:auto}
 <nav>
   <button id=t-speaker aria-selected=true onclick="go('speaker')">Speaker</button>
   <button id=t-system aria-selected=false onclick="go('system')">System</button>
+  <button id=t-wishes aria-selected=false onclick="go('wishes')">Wishes</button>
   <button id=t-wifi aria-selected=false onclick="go('wifi')">Wi-Fi</button>
 </nav>
 <div id=body></div>
@@ -737,7 +763,7 @@ const pct=(n)=>(n==null?'—':n.toFixed(0)+'%');
 
 function go(which){
   tab=which;
-  for(const t of ['speaker','system','wifi'])
+  for(const t of ['speaker','system','wishes','wifi'])
     $('#t-'+t).setAttribute('aria-selected', String(t===which));
   draw();
 }
@@ -866,6 +892,7 @@ function overTime(points, unit, floor, ceil){
 async function draw(){
   if(tab==='speaker') return drawSpeaker();
   if(tab==='system') return drawSystem();
+  if(tab==='wishes') return drawWishes();
   return drawWifi();
 }
 
@@ -949,6 +976,27 @@ async function drawSystem(){
      <div class=acts style="margin-top:.9rem">
        <button class=act onclick="act('restart')">Restart the speaker</button>
      </div><div class=said id=said></div></div>`;
+}
+
+async function drawWishes(){
+  const d=await get('/api/wishes');
+  $('#where').textContent=`${d.total} asked for, across every speaker`;
+  if(!d.wishes.length){
+    $('#body').innerHTML=`<div class=card><h2>Nothing yet</h2><div class=sub>
+      When somebody asks for something this can't do, it writes it down
+      here instead of just saying no.</div></div>`+
+      (d.said?`<div class=card><div class=sub>${esc(d.said)}</div></div>`:'');
+    return;
+  }
+  $('#body').innerHTML = d.wishes.map(w=>`<div class=card>
+     <div class=row><b style="font-weight:600">${esc(w.wish)}</b>
+       <span>${w.times>1?w.times+'&times;':''}</span></div>
+     ${w.askeds.map(a=>`<div class=sub style="margin:.3rem 0 0">
+        &ldquo;${esc(a)}&rdquo;</div>`).join('')}
+     <div class=sub style="margin-top:.5rem;opacity:.7">
+       ${w.speakers.length?esc(w.speakers.join(', '))+' &middot; ':''}
+       ${w.whos.length?esc(w.whos.join(', '))+' &middot; ':''}
+       ${esc((w.last||'').slice(0,10))}</div></div>`).join('');
 }
 
 async function drawWifi(){
