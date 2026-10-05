@@ -37,12 +37,9 @@ TARGET_FILE = HERE / ".deploy-target"      # written by deploy.py
 REMOTE_DIR = "claude-speaker"
 
 
-def target() -> str:
-    if not TARGET_FILE.is_file():
-        raise SystemExit(
-            "I don't know which Pi to ask. Deploy once first:\n\n"
-            "    ./deploy.sh normal@192.168.4.95")
-    return TARGET_FILE.read_text().strip()
+def target(named: str | None = None) -> str:
+    import speakers
+    return speakers.pick(named)
 
 
 def run(pi: str, command: str) -> int:
@@ -64,8 +61,10 @@ def main() -> int:
                         help="what the nightly timer did, last time")
     parser.add_argument("--when", action="store_true",
                         help="when the timer next runs")
+    import speakers
+    speakers.add_argument(parser)
     args = parser.parse_args()
-    pi = target()
+    pi = target(args.pi)
 
     if args.log:
         return run(pi, "true") or subprocess.run(

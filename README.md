@@ -75,6 +75,18 @@ Six commands, all from this folder on the laptop:
 ./evaluate.sh --compare  # which training recipe is better
 ```
 
+With more than one speaker, every one of those takes `--pi`:
+
+```bash
+./card.sh bedroom --flash    # a new one, from a blank card
+./deploy.sh --pi bedroom     # or ./deploy.sh normal@192.168.4.22 the first time
+./label.sh --pi bedroom
+```
+
+`.deploy-target` keeps the list, newest first, and the first line is what
+you get when you don't say. Any unambiguous piece of a name will do, so
+`--pi bed` is enough.
+
 `./label.sh` is the one worth a few minutes a week. It plays back the clips
 that woke the speaker and you answer yes or no; those answers are the only
 ground truth the project has, and the nightly retraining is judged against
@@ -146,6 +158,7 @@ python src/wake_log.py       #    what has woken it, and how those went
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | **On the laptop** | |
 | `card.py` | Prepares an SD card for a new speaker (`./card.sh`) |
+| `speakers.py` | Which Pi a command is talking to, when there's more than one |
 | `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh`) |
 | `start.py` | Starts and stops the service (`./start.sh`) |
 | `wishes.py` | Reads the wishes off the Pi (`./wishes.sh`) |

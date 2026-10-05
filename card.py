@@ -167,7 +167,12 @@ def flash(which: str, yes: bool) -> None:
     if not yes:
         say("")
         say(f"  This ERASES /dev/{disk} completely.")
-        if input("  Type the disk name to go ahead: ").strip() != disk:
+        # Accept it with or without the /dev/, because the line above says
+        # /dev/disk4 and typing back what you were just shown is the
+        # obvious thing to do. The first version demanded the bare name
+        # and threw away a two-minute download over a prefix.
+        typed = input(f'  Type "{disk}" to go ahead: ').strip()
+        if typed.removeprefix("/dev/") != disk:
             raise SystemExit("  Nothing written.")
 
     subprocess.run(["diskutil", "unmountDisk", f"/dev/{disk}"], check=True)

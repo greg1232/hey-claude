@@ -61,12 +61,9 @@ _answers: dict[int, int] = {}
 _clips: list[dict] = []
 
 
-def target() -> str:
-    if not TARGET_FILE.is_file():
-        raise SystemExit(
-            "I don't know which Pi to ask. Deploy once first:\n\n"
-            "    ./deploy.sh normal@192.168.4.95")
-    return TARGET_FILE.read_text().strip()
+def target(named: str | None = None) -> str:
+    import speakers
+    return speakers.pick(named)
 
 
 def fetch(pi: str) -> None:
@@ -448,12 +445,14 @@ def main() -> int:
                         help="include ones a person has already answered")
     parser.add_argument("--keep", action="store_true",
                         help="don't fetch again, use the clips already here")
+    import speakers
+    speakers.add_argument(parser)
     args = parser.parse_args()
 
     if not shutil.which("rsync"):
         raise SystemExit("This needs rsync, same as deploy does.")
 
-    pi = target()
+    pi = target(args.pi)
     if not args.keep:
         fetch(pi)
 

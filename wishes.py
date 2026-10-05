@@ -34,12 +34,9 @@ TARGET_FILE = HERE / ".deploy-target"   # written by deploy.py
 REMOTE = "claude-speaker/state/wishes.jsonl"
 
 
-def target() -> str:
-    if not TARGET_FILE.is_file():
-        raise SystemExit(
-            "I don't know which Pi to ask. Deploy once first:\n\n"
-            "    ./deploy.sh normal@192.168.4.95")
-    return TARGET_FILE.read_text().strip()
+def target(named: str | None = None) -> str:
+    import speakers
+    return speakers.pick(named)
 
 
 def fetch(pi: str) -> str:
@@ -62,6 +59,8 @@ def main() -> int:
                         help="print the raw list instead")
     parser.add_argument("--local", action="store_true",
                         help="read this machine's own wishes, not the Pi's")
+    import speakers
+    speakers.add_argument(parser)
     args = parser.parse_args()
 
     import wishes as engine
@@ -69,7 +68,7 @@ def main() -> int:
     if args.local:
         where, raw = str(engine.WHERE), None
     else:
-        pi = target()
+        pi = target(args.pi)
         where, raw = f"{pi}:{REMOTE}", fetch(pi)
 
     found = engine.read(raw)
@@ -87,7 +86,7 @@ def main() -> int:
         if args.local:
             engine.WHERE.unlink(missing_ok=True)
         else:
-            subprocess.run(["ssh", target(), f"rm -f {REMOTE}"], check=True)
+            subprocess.run(["ssh", pi, f"rm -f {REMOTE}"], check=True)
         print("Forgotten.")
         return 0
 

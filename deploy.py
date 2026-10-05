@@ -266,14 +266,15 @@ def settings_for_pi() -> str:
 
 
 def resolve_target(named: str | None) -> str:
-    if named:
-        TARGET_FILE.write_text(named + "\n")
-        return named
-    if TARGET_FILE.is_file():
-        return TARGET_FILE.read_text().strip()
-    raise SystemExit(
-        "Which Pi? Give it a user and address, for example:\n\n"
-        "    ./deploy.sh normal@192.168.4.95")
+    """Which Pi, remembering it without forgetting the others.
+
+    This used to overwrite .deploy-target, so deploying to a second
+    speaker silently pointed every other command at it too.
+    """
+    import speakers
+    target = speakers.pick(named)
+    speakers.remember(target)
+    return target
 
 
 def install_packages(pi: Pi) -> None:
