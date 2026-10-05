@@ -238,7 +238,7 @@ RESCUE_EVERY = float(_get("RESCUE_EVERY", "20"))
 # past. The speaker reads the password out when it announces itself, so the
 # default is the one string everybody in the house already knows rather
 # than something random nobody could type. WPA2 needs eight characters.
-AP_NAME = _get("AP_NAME", "Claude Speaker")
+AP_NAME = _get("AP_NAME", f"Claude Speaker {SPEAKER_NAME}")
 # One word and all lower case on purpose: it is read out loud and then
 # typed into a phone, where a space or a capital is a failed attempt with
 # no explanation. rescue.spoken_password() describes whatever is set here.
@@ -281,7 +281,11 @@ MUSIC_WATCH_PATIENCE = float(_get("MUSIC_WATCH_PATIENCE", "10"))
 MUSIC_TAKE_BACK = _get("MUSIC_TAKE_BACK", "on").lower() not in ("off", "0", "false", "no")
 
 # What the Pi calls itself in the Spotify app's device list.
-SPOTIFY_DEVICE = _get("SPOTIFY_DEVICE", "Claude Speaker")
+# Derived, so two speakers cannot both be "Claude Speaker". music.py finds
+# this Pi in the account's device list by name and takes the first match,
+# so with two of them a song asked for in one room could start in the
+# other — and nothing would look broken.
+SPOTIFY_DEVICE = _get("SPOTIFY_DEVICE", f"Claude Speaker {SPEAKER_NAME}")
 
 
 if __name__ == "__main__":

@@ -377,8 +377,11 @@ def install_spotify(pi: Pi) -> None:
                "sudo systemctl disable --now raspotify 2>/dev/null; true",
                tty=True)
 
-    unit = LIBRESPOT_UNIT.format(
-        name=setting("SPOTIFY_DEVICE", "Claude Speaker"))
+    # The same name src/config.py will compute, derived the same way. If
+    # these two disagree the speaker advertises under one name and looks
+    # itself up under another, finds nothing, and says it isn't showing up
+    # in Spotify — which is true, and baffling.
+    unit = LIBRESPOT_UNIT.format(name=spotify_name(pi))
     handle, path = tempfile.mkstemp()
     try:
         Path(path).write_text(unit)
@@ -393,6 +396,20 @@ def install_spotify(pi: Pi) -> None:
     indent("librespot is "
            + (pi.output("systemctl --user is-active librespot").strip()
               or "not running"))
+
+
+def speaker_name(pi: Pi) -> str:
+    """What this unit calls itself — SPEAKER_NAME, or its hostname.
+
+    Mirrors src/config.py. Deploy cannot just import that: on a first run
+    the code is not on the Pi yet when the Spotify service is written.
+    """
+    return setting("SPEAKER_NAME", "") or pi.output("hostname").strip() \
+        or "speaker"
+
+
+def spotify_name(pi: Pi) -> str:
+    return setting("SPOTIFY_DEVICE", "") or f"Claude Speaker {speaker_name(pi)}"
 
 
 def setting(name: str, fallback: str) -> str:

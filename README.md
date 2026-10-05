@@ -65,6 +65,7 @@ Ctrl-C stops it. On the Pi it runs as a systemd service — see
 Six commands, all from this folder on the laptop:
 
 ```bash
+./card.sh bedroom        # prepare an SD card for a new speaker
 ./deploy.sh              # put the current code on the Pi
 ./start.sh --status      # (on the Pi) is it running
 ./wishes.sh              # what it was asked for and couldn't do
@@ -144,6 +145,7 @@ python src/wake_log.py       #    what has woken it, and how those went
 | `train/build_book_index.py` | Builds the local index of 48,284 books |
 | `train/spotify_login.py` | Signs in to Spotify once, for a token |
 | **On the laptop** | |
+| `card.py` | Prepares an SD card for a new speaker (`./card.sh`) |
 | `deploy.py` | Puts the whole thing on a Pi (`./deploy.sh`) |
 | `start.py` | Starts and stops the service (`./start.sh`) |
 | `wishes.py` | Reads the wishes off the Pi (`./wishes.sh`) |
