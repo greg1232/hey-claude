@@ -330,6 +330,16 @@ if id {user} >/dev/null 2>&1; then
           /home/{user}/.ssh/authorized_keys
 fi
 
+# Grow the filesystem to the card, here rather than by leaving `resize` on
+# the kernel command line. That keyword is consumed by the first boot, so
+# juggling it between the hooked line and the restored one is fiddly and I
+# got it wrong: a card came up with a 29.2 GB partition and a 5.6 GB
+# filesystem on it, which is not enough room for the speaker. ext4 grows
+# while mounted, so this just works and needs no keyword at all.
+ROOTDEV=$(findmnt -no SOURCE /)
+resize2fs "$ROOTDEV" || true
+df -h /
+
 rfkill unblock wifi || true
 raspi-config nonint do_wifi_country {country} || true
 systemctl enable NetworkManager ssh || true
@@ -391,6 +401,9 @@ def prepare(boot: Path, name: str, user: str, password: str,
     # with nothing written down to say why. So the hook runs without it,
     # and the line restored afterwards keeps it, which does the resize on
     # the reboot instead.
+    # Keep resize out of the hooked line — a resize and a boot to a
+    # minimal target do not need to happen at once — but firstrun.sh grows
+    # the filesystem itself now, so nothing depends on this either way.
     hooked = re.sub(r"\s+resize\b", "", line)
     backup.write_text(line + "\n")
     cmdline.write_text(hooked + " " + RUN_HOOK + "\n")
