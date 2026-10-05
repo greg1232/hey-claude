@@ -51,9 +51,35 @@ import tools
 #   swell    (how often it breathes in Hz, how deep, 0 to 1)
 #   sparkle  a little treble noise on top — rain on a roof
 #   crackle  random pops per second — a fire
+#   drops    (hertz, per second, loudness) per layer: impulses rung
+#            through a resonator, which is what a raindrop landing is
+#   wander   depth of a slow random walk in loudness, instead of a sine
+#   stereo   two decorrelated channels, so it surrounds rather than
+#            points. Costs a second noise stream and nothing else.
 RECIPES = {
-    "rain":       dict(colour="pink",  swell=(0.09, 0.10), sparkle=0.30),
-    "ocean":      dict(colour="brown", swell=(0.07, 0.55)),
+    # Rain, after reading how it is actually done rather than guessing.
+    #
+    # Farnell's model in Designing Sound builds it from a *shaped* bed
+    # plus a few audible drops a second — not from thousands of drops.
+    # The first version here used three thousand a second and measured
+    # flatter than the hiss it replaced, which is the whole lesson: a
+    # thousand overlapping transients is the definition of noise. That is
+    # why rain sounds like noise in the first place.
+    #
+    # So the texture comes from `gate`, a threshold on the noise bed that
+    # keeps only its peaks — Farnell subtracts a constant and clips, which
+    # turns smooth noise into sparse spatter for almost no cost. The drops
+    # on top are sparse and loud enough to hear one at a time, which is
+    # what the ear uses to say water rather than static.
+    "rain":       dict(colour="pink", wander=0.10, sparkle=0.10,
+                       stereo=True, gate=0.55,
+                       drops=((2800, 7, 0.40),      # near, bright, countable
+                              (1500, 26, 0.22),     # middle distance
+                              (850, 70, 0.10))),    # far, blurring into bed
+    # The old recipe, kept so the two can be compared by ear and in the
+    # wake log — this one has to be listened through all night.
+    "rain-plain": dict(colour="pink",  swell=(0.09, 0.10), sparkle=0.30),
+    "ocean":      dict(colour="brown", swell=(0.07, 0.55), stereo=True),
     "fireplace":  dict(colour="brown", swell=(0.30, 0.18), crackle=7.0),
     "fan":        dict(colour="brown", swell=(0.02, 0.04)),
     "white":      dict(colour="white"),
@@ -109,6 +135,10 @@ class _Maker:
         self._rng = np.random.default_rng()
         self._phase = 0.0
         self._embers = np.zeros(0, dtype=np.float32)
+        self._wander = 1.0                 # slow random walk, around 1.0
+        self._drop_state: dict = {}        # resonator memory, per layer
+        self._tails: dict = {}             # rings that outlive their block
+        self._right = None                 # the second channel's filter
 
         # A three-pole fit to pink noise, and a leaky integrator for brown.
         # Both need their state kept between blocks; lfilter_zi gives the
@@ -130,36 +160,140 @@ class _Maker:
                        if self._b is not None else None)
 
     def block(self, frames: int):
+        """The next slice of sound.
+
+        Built in two parts, which is what makes stereo cheap: a *bed* of
+        filtered noise that each channel gets its own copy of, and the
+        *extras* — drops, sparkle, crackle — which are the same in both.
+        Shared transients with a decorrelated bed is what surrounds you;
+        two identical channels are a point source however loud.
+        """
         np = self._np
-        noise = self._rng.standard_normal(frames).astype(np.float32)
 
-        if self._b is not None:
-            from scipy.signal import lfilter
-            noise, self._state = lfilter(self._b, self._a, noise,
-                                         zi=self._state)
-            noise = noise.astype(np.float32)
-        out = noise * self._gain
-
+        # How loud this block is, shared by both channels so they swell
+        # together. A sine for the old recipes, a random walk for rain.
+        level = 1.0
         swell = self._recipe.get("swell")
         if swell:
             hertz, depth = swell
             step = 2 * np.pi * hertz / self._rate
             angles = self._phase + step * np.arange(frames, dtype=np.float32)
             self._phase = float((self._phase + step * frames) % (2 * np.pi))
-            out *= (1.0 - depth) + depth * (0.5 + 0.5 * np.sin(angles))
+            level = (1.0 - depth) + depth * (0.5 + 0.5 * np.sin(angles))
 
+        wander = self._recipe.get("wander")
+        if wander:
+            # Rain gusts; it does not oscillate. One very slow pole, so
+            # the loudness takes tens of seconds to get anywhere, clamped
+            # so it can drift but never fade away or shout.
+            target = 1.0 + wander * float(self._rng.standard_normal()) * 0.5
+            self._wander += (target - self._wander) * min(
+                frames / (self._rate * 8.0), 1.0)
+            self._wander = float(np.clip(self._wander, 1.0 - wander,
+                                         1.0 + wander))
+            level = level * self._wander
+
+        # Everything added rather than multiplied, and identical in both
+        # channels: a drop lands in one place, not in each ear separately.
+        extras = np.zeros(frames, dtype=np.float32)
         sparkle = self._recipe.get("sparkle")
         if sparkle:
             # Difference of white noise is a cheap high pass — the hiss of
             # rain hitting things, as opposed to the rumble of a downpour.
             fine = self._rng.standard_normal(frames + 1).astype(np.float32)
-            out += sparkle * 0.3 * np.diff(fine)
-
+            extras += sparkle * 0.3 * np.diff(fine)
         crackle = self._recipe.get("crackle")
         if crackle:
-            out += self._crackle(frames, crackle)
+            extras += self._crackle(frames, crackle)
+        for layer in self._recipe.get("drops", ()):
+            extras += self._drops(frames, *layer)
 
-        return np.clip(out * config.SOUND_VOLUME, -1.0, 1.0)
+        left = self._shape(self._bed(frames, "left")) * level + extras
+        left = np.clip(left * config.SOUND_VOLUME, -1.0, 1.0)
+        if not self._recipe.get("stereo"):
+            return left
+
+        right = self._shape(self._bed(frames, "right")) * level + extras
+        right = np.clip(right * config.SOUND_VOLUME, -1.0, 1.0)
+        return np.stack([left, right], axis=1)
+
+    def _shape(self, bed):
+        """Keep the peaks of the noise and throw the middle away.
+
+        Farnell's trick, and the cheapest realism in the file: subtract a
+        threshold and clip at zero, and smooth noise becomes sparse
+        spatter. Multiplied back up so the loudness does not drop with it.
+        """
+        np = self._np
+        gate = self._recipe.get("gate")
+        if not gate:
+            return bed
+        rms = float(np.sqrt((bed * bed).mean())) or 1.0
+        keep = np.maximum(np.abs(bed) - gate * rms, 0.0)
+        return (np.sign(bed) * keep * (1.0 + gate)).astype(np.float32)
+
+    def _bed(self, frames: int, side: str):
+        """A channel's own noise, coloured, with its filter state kept."""
+        np = self._np
+        noise = self._rng.standard_normal(frames).astype(np.float32)
+        if self._b is None:
+            return noise * self._gain
+        from scipy.signal import lfilter
+        if side == "right" and self._right is None:
+            self._right = self._state * 0.0
+        state = self._state if side == "left" else self._right
+        noise, state = lfilter(self._b, self._a, noise, zi=state)
+        if side == "left":
+            self._state = state
+        else:
+            self._right = state
+        return noise.astype(np.float32) * self._gain
+
+    def _drops(self, frames: int, hertz: float, per_second: float,
+               loudness: float):
+        """One layer of raindrops: impulses, each rung through a resonator.
+
+        Not a loop over drops — at two thousand a second that would cost
+        more than the wake word. A sparse impulse train through a two-pole
+        resonator gives every impulse its own decaying ring in one pass,
+        and the whole layer is a handful of microseconds.
+
+        The ring outlives its block, so the tail is carried into the next
+        one; cutting it at the edge would be a click, and a click every
+        46 ms is exactly the tick this file exists to avoid.
+        """
+        np = self._np
+        from scipy.signal import lfilter
+
+        tail = self._rate // 20
+        train = np.zeros(frames + tail, dtype=np.float32)
+        held = self._tails.get(hertz)
+        if held is not None:
+            train[:held.size] += held[:train.size]
+
+        # Poisson, so the gaps between drops are irregular. Evenly spaced
+        # impulses buzz at their own rate rather than sounding like rain.
+        count = self._rng.poisson(per_second * frames / self._rate)
+        if count:
+            where = self._rng.integers(0, frames, size=count)
+            # Near drops are louder and rarer; the spread is what stops a
+            # layer sounding like one drop repeated.
+            train[where] += self._rng.uniform(0.3, 1.0,
+                                              size=count).astype(np.float32)
+
+        # A two-pole resonator at `hertz`, decaying in a few milliseconds.
+        decay = float(np.exp(-1.0 / (self._rate * 0.010)))
+        w = 2 * np.pi * hertz / self._rate
+        a = [1.0, -2.0 * decay * float(np.cos(w)), decay * decay]
+        state = self._drop_state.get(hertz)
+        rung, state = lfilter([1.0 - decay], a, train, zi=state) \
+            if state is not None else lfilter([1.0 - decay], a, train,
+                                              zi=np.zeros(2))
+        self._drop_state[hertz] = state
+        rung = rung.astype(np.float32)
+
+        self._tails[hertz] = train[frames:].copy()
+        return rung[:frames] * loudness
 
     def _crackle(self, frames: int, per_second: float):
         """Random pops that decay away — a fire, more or less.
@@ -332,14 +466,26 @@ def _open() -> None:
     if _maker is None:
         _maker = _Maker(RECIPES[_name], rate)
 
+    # Stereo only for the sounds that ask for it. A mono stream is half
+    # the data over USB and half the work, and a fan does not need to
+    # arrive from two directions.
+    wide = bool(RECIPES[_name].get("stereo"))
+
     def feed(outdata, frames, time_info, status):
         import numpy as np
         block = _maker.block(frames)
-        outdata[:, 0] = (block * 32767).astype(np.int16)
+        if block.ndim == 1:
+            block = block[:, None]
+        # However many channels the device took, fill them all: a stereo
+        # block into a mono device would otherwise play only the left.
+        for channel in range(outdata.shape[1]):
+            source = block[:, min(channel, block.shape[1] - 1)]
+            outdata[:, channel] = (source * 32767).astype(np.int16)
 
     try:
         _stream = sd.OutputStream(
-            samplerate=rate, channels=1, dtype="int16", device=device,
+            samplerate=rate, channels=2 if wide else 1,
+            dtype="int16", device=device,
             # Bigger than the default. The wake word is already using most
             # of a core, and an underrun here is an audible tear in what is
             # supposed to be the calmest thing in the room.
