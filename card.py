@@ -276,8 +276,16 @@ IC=/usr/lib/raspberrypi-sys-mods/imager_custom
 ls -l $IC
 
 if [ -x $IC ]; then
+  # The real interface, read off a Pi rather than assumed. There is no
+  # set_user: the user comes from userconf.txt, which a systemd service
+  # reads on the normal boot, and that part has always worked.
+  #
+  #   set_hostname HOSTNAME
+  #   enable_ssh [-k|--key-only]|[-p|--pass-auth] [-d] [KEY_LINE...]
+  #   set_wlan [-h|--hidden] [-p|--plain] SSID [PASS [COUNTRY]]
+  #   set_keymap KEYMAP
+  #   set_timezone TIMEZONE
   $IC set_hostname {name}              || echo "FELL BACK: hostname"
-  $IC set_user {user} '{pwhash}'       || echo "FELL BACK: user"
   $IC enable_ssh -k '{key}'            || echo "FELL BACK: ssh key"
   $IC set_wlan '{ssid}' '{psk}' '{country}' || echo "FELL BACK: wlan"
   $IC set_keymap 'us'                  || true
@@ -415,7 +423,7 @@ def prepare(boot: Path, name: str, user: str, password: str,
     script = boot / "firstrun.sh"
     script.write_text(FIRSTRUN.format(
         name=name, user=user, ssid=ssid, psk=psk, key=my_key(),
-        country=country, pwhash=hashed(password),
+        country=country,
         timezone=subprocess.run(["readlink", "/etc/localtime"],
                                 capture_output=True, text=True
                                 ).stdout.strip().split("zoneinfo/")[-1]
