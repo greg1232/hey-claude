@@ -203,6 +203,14 @@ SOUND_HOURS = float(_get("SOUND_HOURS", "8"))
 FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 
 
+# --- Learning from the other speakers ---
+# Each speaker fits on the shipped corpus plus its own firings, so a new
+# one starts knowing nothing about this house. With this on, the nightly
+# retraining also trains on every other speaker's labelled firings from
+# the shared archive — their data, never their operating point: the
+# threshold is still chosen on this room.
+POOL = _get("POOL", "on").lower() not in ("off", "0", "false", "no")
+
 # --- Keeping what it learns ---
 # A Hugging Face token, so each retraining can commit the data it used and
 # stamp the model with that commit. Without one, retraining still works and

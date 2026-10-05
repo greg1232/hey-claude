@@ -818,6 +818,10 @@ def restart_if_running(pi: Pi) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # --pi, so this reads the same as the other laptop commands. The
+    # positional still works and is how a new Pi gets named the first time.
+    import speakers
+    speakers.add_argument(parser)
     parser.add_argument("target", nargs="?",
                         help="user@address of the Pi; remembered afterwards")
     parser.add_argument("--run", action="store_true",
@@ -837,7 +841,7 @@ def main() -> int:
     args = parser.parse_args()
 
     local_env()  # Fail before touching the network if the key is missing.
-    pi = Pi(resolve_target(args.target))
+    pi = Pi(resolve_target(args.target or args.pi))
     print(f"Deploying to {pi.target}:~/{REMOTE_DIR}")
 
     step("Checking the Pi is reachable")

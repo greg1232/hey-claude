@@ -30,6 +30,7 @@ import argparse
 import contextlib
 from datetime import datetime
 import fcntl
+import json
 import sys
 from pathlib import Path
 
@@ -210,6 +211,94 @@ def load_log():
             np.array(known, dtype="<U32"))
 
 
+def load_the_others(say=print):
+    """Every other speaker's labelled firings, from the shared archive.
+
+    Each speaker fits on the shipped bank plus its own log, which means a
+    new one starts knowing nothing about this house and takes weeks to
+    catch up, while everything the others have learned sits unused. The
+    bottleneck this project has always had is too few confirmed positives
+    — one speaker had 712 human labels and the next had none.
+
+    So the training set is the union. The *test* set is not: rows from
+    elsewhere come back marked `pooled`, which keeps them out of `human`
+    and so out of the held-out slice and the threshold sweep. A bedroom at
+    night and a kitchen with a television have different false-wake
+    economics, and the operating point has to be chosen on the room it
+    will run in.
+
+    Costs one download per speaker per night, cached by the hub, and
+    vectors.f16 is about ten megabytes each.
+    """
+    if _setting("POOL", "on").lower() in ("off", "0", "false", "no"):
+        return None
+    try:
+        sys.path.insert(0, str(HERE))
+        import archive
+        from huggingface_hub import HfApi, hf_hub_download
+        if not archive.token():
+            return None
+        api = HfApi(token=archive.token())
+        repo = f"{api.whoami()['name']}/{archive.REPO}"
+        mine = archive.where()
+        files = set(api.list_repo_files(repo, repo_type="dataset"))
+    except Exception as error:
+        say(f"  not pooling ({type(error).__name__}: {error})")
+        return None
+
+    others = sorted({f.split("/")[0] for f in files
+                     if f.endswith("/wakes/wakes.jsonl")} - {mine})
+    if not others:
+        return None
+
+    X, y, kind = [], [], []
+    for who in others:
+        try:
+            index = hf_hub_download(repo, f"{who}/wakes/wakes.jsonl",
+                                    repo_type="dataset",
+                                    token=archive.token())
+            raw = hf_hub_download(repo, f"{who}/wakes/vectors.f16",
+                                  repo_type="dataset",
+                                  token=archive.token())
+            vectors = np.fromfile(raw, dtype=np.float16)
+            vectors = vectors[:len(vectors) // wake_log.WIDTH
+                              * wake_log.WIDTH].reshape(-1, wake_log.WIDTH)
+        except Exception as error:
+            say(f"  couldn't read {who} ({type(error).__name__})")
+            continue
+
+        rows = {}
+        for line in open(index):
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if "n" in row:
+                rows.setdefault(row["n"], {}).update(row)
+
+        took = 0
+        for number, row in sorted(rows.items()):
+            if "label" not in row or number >= len(vectors):
+                continue
+            if row.get("by") != "person" and DISCREDITED in row.get("why", ""):
+                continue
+            X.append(vectors[number].astype(np.float32))
+            y.append(int(row["label"]))
+            # Keep the distinction between a person's answer and a rule's
+            # guess — it decides the weight — but mark both as pooled so
+            # neither can end up being tested on.
+            kind.append("pooled-person"
+                        if row.get("by") == "person" or row.get("taught")
+                        else "pooled")
+            took += 1
+        say(f"  pooled {took} from {who}")
+
+    if not X:
+        return None
+    return (np.array(X, dtype=np.float32), np.array(y),
+            np.array(kind, dtype="<U16"))
+
+
 def _kind(firing: dict) -> str:
     """Where a label came from, which is how much it can be trusted.
 
@@ -244,7 +333,8 @@ def _fit_on(bank_X, bank_y, log_X, log_y, log_kind, weight, rows):
     X = np.vstack([bank_X, log_X[rows]])
     y = np.r_[bank_y, log_y[rows]]
     w = np.r_[np.ones(len(bank_X)),
-              np.where(np.isin(log_kind[rows], ("person", "enrolled")),
+              np.where(np.isin(log_kind[rows],
+                               ("person", "enrolled", "pooled-person")),
                        weight * BY_PERSON, weight)]
     scaler = StandardScaler().fit(X)
     clf = LogisticRegression(max_iter=5000, C=FIT_HELD_BACK,
@@ -550,6 +640,20 @@ def refit(model: Path = MODEL, weight: float = 3.0, dry: bool = False,
     # one if this machine has already learned something.
     running = LEARNED if LEARNED.exists() else model
     log_X, log_y, log_kind, log_known = load_log()
+
+    # Everything the other speakers have learned, added to what this one
+    # can be trained on but never to what it is judged on.
+    shared = load_the_others(say)
+    if shared is not None:
+        more_X, more_y, more_kind = shared
+        log_X = np.vstack([log_X, more_X]) if len(log_X) else more_X
+        log_y = np.r_[log_y, more_y]
+        log_kind = np.r_[log_kind.astype("<U16"), more_kind]
+        # Pooled rows have no local history, and `known` only ever decides
+        # which of *our* rows count as fresh. Empty sorts before any real
+        # timestamp, so they are never mistaken for new.
+        log_known = np.r_[log_known.astype("<U32"),
+                          np.array([""] * len(more_y), dtype="<U32")]
 
     say(f"  bank: {len(bank_X)} features "
           f"({int((bank_y == 1).sum())} wake word, "
