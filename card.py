@@ -258,16 +258,36 @@ def wifi_from_a_working_pi() -> tuple[str, str] | None:
 
 
 FIRSTRUN = """#!/bin/bash
-# Written by card.py. Runs once, very early, as a systemd unit.
+# Written by card.py. Runs once, early, as a systemd unit.
 #
-# NetworkManager is not running at this point in the boot, so everything
-# here writes a file rather than calling a command. Files need no daemon.
+# Prefer imager_custom, which is Raspberry Pi's own script for exactly this
+# and is sitting at /usr/lib/raspberrypi-sys-mods/imager_custom on the
+# card. Hand-rolling this is what went wrong repeatedly: the user does not
+# exist yet at this point in the boot and NetworkManager is not running, so
+# writing authorized_keys or calling nmcli both fail. Their script knows
+# that; mine kept learning it.
+#
+# Everything below still falls back to doing it by hand, because the one
+# thing worse than the vendor tool missing a case is finding out silently.
 exec > /boot/firmware/debug.txt 2>&1
 set -x
 date -u
+IC=/usr/lib/raspberrypi-sys-mods/imager_custom
+ls -l $IC
 
-mkdir -p /etc/NetworkManager/system-connections
-cat > /etc/NetworkManager/system-connections/{ssid}.nmconnection <<'CONN'
+if [ -x $IC ]; then
+  $IC set_hostname {name}              || echo "FELL BACK: hostname"
+  $IC set_user {user} '{pwhash}'       || echo "FELL BACK: user"
+  $IC enable_ssh -k '{key}'            || echo "FELL BACK: ssh key"
+  $IC set_wlan '{ssid}' '{psk}' '{country}' || echo "FELL BACK: wlan"
+  $IC set_keymap 'us'                  || true
+  $IC set_timezone '{timezone}'        || true
+fi
+
+# --- and by hand, for anything the above did not manage -----------------
+if [ ! -f /etc/NetworkManager/system-connections/{ssid}.nmconnection ]; then
+  mkdir -p /etc/NetworkManager/system-connections
+  cat > /etc/NetworkManager/system-connections/{ssid}.nmconnection <<'CONN'
 [connection]
 id={ssid}
 type=wifi
@@ -289,24 +309,21 @@ method=auto
 [ipv6]
 method=auto
 CONN
-# NetworkManager ignores a connection file that anyone else can read.
-chown root:root /etc/NetworkManager/system-connections/{ssid}.nmconnection
-chmod 600 /etc/NetworkManager/system-connections/{ssid}.nmconnection
+  chown root:root /etc/NetworkManager/system-connections/{ssid}.nmconnection
+  chmod 600 /etc/NetworkManager/system-connections/{ssid}.nmconnection
+fi
 
-echo {name} > /etc/hostname
-sed -i "s/127.0.1.1.*/127.0.1.1\\t{name}/" /etc/hosts || true
+[ -s /etc/hostname ] || echo {name} > /etc/hostname
+grep -q {name} /etc/hostname || echo {name} > /etc/hostname
+sed -i "s/127.0.1.1.*/127.0.1.1\t{name}/" /etc/hosts || true
 
-# The key. This runs before userconf.txt has made the user — that service
-# starts on the normal boot, and this is kernel-command-line.target — so
-# writing straight to /home/{user} fails with "invalid user". /etc/skel is
-# copied into a home directory when it is created, so leaving it there
-# gets it in anyway, working with the ordering instead of against it.
+# The key goes to /etc/skel as well: at this point in the boot the user may
+# not exist, and skel is copied into a home directory when one is made.
 install -d -m 700 /etc/skel/.ssh
 cat > /etc/skel/.ssh/authorized_keys <<'KEY'
 {key}
 KEY
 chmod 600 /etc/skel/.ssh/authorized_keys
-# And directly too, for the case where the user is already there.
 if id {user} >/dev/null 2>&1; then
   install -d -m 700 -o {user} -g {user} /home/{user}/.ssh
   install -m 600 -o {user} -g {user} /etc/skel/.ssh/authorized_keys \
@@ -317,16 +334,8 @@ rfkill unblock wifi || true
 raspi-config nonint do_wifi_country {country} || true
 systemctl enable NetworkManager ssh || true
 
-# What we found, in case it still does not come up.
-ls -l /usr/sbin/NetworkManager /usr/bin/nmcli
-ls /sys/class/net/
-ls -l /etc/NetworkManager/system-connections/
-
-# Everything above happens before NetworkManager exists, so none of it can
-# say whether NetworkManager liked any of it. This unit runs after it, on
-# the normal boot, and writes what it finds somewhere a laptop can read —
-# which is the only way to see the half of the problem that matters when
-# the Pi has no screen and never reaches the network.
+# Everything above runs before NetworkManager, so none of it can say
+# whether NetworkManager liked any of it. This unit runs after it does.
 cat > /etc/systemd/system/claude-netdebug.service <<'UNIT'
 [Unit]
 Description=Write down what the network actually did
@@ -336,17 +345,21 @@ Wants=NetworkManager.service
 [Service]
 Type=oneshot
 ExecStartPre=/bin/sleep 25
-ExecStart=/bin/bash -c '{{ date; echo "--- devices ---"; nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device; echo "--- connections ---"; nmcli -t -f NAME,TYPE,AUTOCONNECT,ACTIVE connection show; echo "--- what it can see ---"; nmcli -t -f SSID,SIGNAL,CHAN device wifi list; echo "--- radio ---"; rfkill list; iw reg get 2>&1 | head -4; echo "--- address ---"; ip -4 addr show wlan0; echo "--- NetworkManager said ---"; journalctl -u NetworkManager --no-pager -n 60; }} > /boot/firmware/net-debug.txt 2>&1; sync'
+ExecStart=/bin/bash -c '{{ date; id {user}; echo "--- devices ---"; nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device; echo "--- connections ---"; nmcli -t -f NAME,TYPE,AUTOCONNECT,ACTIVE connection show; echo "--- seen ---"; nmcli -t -f SSID,SIGNAL,CHAN device wifi list; echo "--- radio ---"; rfkill list; iw reg get 2>&1 | head -4; echo "--- address ---"; ip -4 addr show wlan0; echo "--- NM log ---"; journalctl -u NetworkManager --no-pager -n 60; }} > /boot/firmware/net-debug.txt 2>&1; sync'
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 systemctl enable claude-netdebug.service
 
+ls -l /etc/NetworkManager/system-connections/
+id {user} || echo "user does not exist yet, skel will supply the key"
+
 cp /boot/firmware/cmdline.txt.backup /boot/firmware/cmdline.txt
 sync
 echo DONE
 """
+
 
 RUN_HOOK = ("systemd.run=/boot/firmware/firstrun.sh "
             "systemd.run_success_action=reboot "
@@ -387,8 +400,13 @@ def prepare(boot: Path, name: str, user: str, password: str,
     (boot / "ssh").touch()          # consumed on boot, so written every time
 
     script = boot / "firstrun.sh"
-    script.write_text(FIRSTRUN.format(name=name, user=user, ssid=ssid,
-                                      psk=psk, key=my_key(), country=country))
+    script.write_text(FIRSTRUN.format(
+        name=name, user=user, ssid=ssid, psk=psk, key=my_key(),
+        country=country, pwhash=hashed(password),
+        timezone=subprocess.run(["readlink", "/etc/localtime"],
+                                capture_output=True, text=True
+                                ).stdout.strip().split("zoneinfo/")[-1]
+        or "America/Los_Angeles"))
     os.chmod(script, 0o755)
 
     # custom.toml would be read by nothing here, and leaving one around
