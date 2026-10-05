@@ -212,6 +212,13 @@ FREESOUND_KEY = _get("FREESOUND_API_KEY", "")
 HF_TOKEN = _get("HF_TOKEN", "")
 
 
+# --- Which speaker this is ---
+# One name per unit, and the only thing that has to differ between them.
+# It is the folder this speaker's data goes under in the shared dataset,
+# what it calls itself on Spotify, and the network it raises when it is
+# lost. Defaults to the hostname, which is already unique on a network.
+SPEAKER_NAME = _get("SPEAKER_NAME", "") or __import__("socket").gethostname()
+
 # --- When it can't get onto a network ---
 # After this long unable to join anything, the speaker raises an access
 # point of its own and says so, so you can fix the Wi-Fi from a phone. See

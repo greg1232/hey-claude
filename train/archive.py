@@ -41,6 +41,7 @@ import contextlib
 import csv
 import json
 import os
+import re
 import signal
 import sys
 import threading
@@ -80,10 +81,32 @@ FOUNDING = (
 )
 
 
-def token() -> str:
+def _config():
     sys.path.insert(0, str(HERE.parent / "src"))
     import config
-    return config.HF_TOKEN or os.environ.get("HF_TOKEN", "")
+    return config
+
+
+def token() -> str:
+    return _config().HF_TOKEN or os.environ.get("HF_TOKEN", "")
+
+
+def where() -> str:
+    """The folder this speaker's data goes in, and why there is one.
+
+    Every speaker uploads to the same repository, and before this they all
+    uploaded to the root of it. Two of them relearning at four in the
+    morning meant whichever finished last replaced the other's wakes.jsonl,
+    vectors.f16 and metadata.csv.
+
+    Losing a night would have been the harmless version. vectors.f16 is
+    row-aligned to wakes.jsonl, so a mixed pair puts every feature against
+    somebody else's label — and the gate that decides whether to promote a
+    model measures on that same pair, so it need not notice. The result is
+    a model fitted on nonsense that scores well.
+    """
+    name = (_config().SPEAKER_NAME or "").strip().lower()
+    return re.sub(r"[^a-z0-9_-]+", "-", name).strip("-") or "speaker"
 
 
 def snapshot(say=print) -> str:
@@ -112,12 +135,15 @@ def snapshot(say=print) -> str:
         with patience(PATIENCE, "the dataset upload"):
             commit = api.upload_folder(
                 folder_path=str(STATE), repo_id=repo, repo_type="dataset",
+                path_in_repo=where(),
                 allow_patterns=[f"{name}*" for name in KEEP]
                                + [f"{name}/**" for name in KEEP],
-                commit_message=f"Data as of {datetime.now().astimezone():%Y-%m-%d %H:%M}",
+                commit_message=f"{where()}: data as of "
+                               f"{datetime.now().astimezone():%Y-%m-%d %H:%M}",
             )
+        card(api, repo, say)
         sha = getattr(commit, "oid", "") or ""
-        say(f"  dataset committed as {sha[:8]} in {repo}")
+        say(f"  dataset committed as {sha[:8]} in {repo}/{where()}")
         keep_recordings(api, repo, say)
         return sha
     except Exception as error:
@@ -200,6 +226,67 @@ def keep_model(model: Path, sha: str, scores: dict, say=print) -> None:
         say(f"  model kept as {name}")
     except Exception as error:
         say(f"  couldn't keep the model ({type(error).__name__})")
+
+
+def card(api, repo: str, say=print) -> None:
+    """The note at the root, explaining that there is more than one speaker.
+
+    Each speaker's own README now lands inside its folder, so without this
+    the front page of the dataset would be whichever one uploaded last,
+    describing itself as though it were the whole thing.
+    """
+    text = f"""---
+license: other
+task_categories:
+- audio-classification
+tags:
+- keyword-spotting
+- wake-word
+---
+
+# Claude Speaker — what woke it
+
+Every time a wake word fired, and every time it nearly did, as recorded by
+reSpeaker XVF3800 arrays in one house. Kept so the detector can be
+retrained on its own mistakes, and so every model can say which version of
+this it was fitted on.
+
+**One folder per speaker.** They share a repository and must not share a
+path: `wakes/vectors.f16` is row-aligned to `wakes/wakes.jsonl`, so two
+speakers writing to the same place would put one's features against the
+other's labels — and the gate that decides whether to promote a model
+measures on that same pair, so it need not notice.
+
+    <speaker>/metadata.csv     one row per firing, lined up with its audio
+    <speaker>/wakes/           the log, the feature vectors, and the audio
+    <speaker>/enrolled/        somebody teaching it their voice
+
+Shared, because they are not any one speaker's:
+
+    recorded/wake_word/        eighty recordings of four people saying it
+    recorded/room/             the room not saying it
+    models/                    one per retraining, named for its dataset
+
+Written by `train/archive.py` in
+[greg1232/hey-claude](https://github.com/greg1232/hey-claude).
+Last updated {datetime.now().astimezone().strftime('%Y-%m-%d %H:%M %Z')}.
+"""
+    handle, path = None, None
+    try:
+        import tempfile
+        handle, path = tempfile.mkstemp(suffix=".md")
+        Path(path).write_text(text)
+        with patience(PATIENCE, "the dataset card"):
+            api.upload_file(path_or_fileobj=path, path_in_repo="README.md",
+                            repo_id=repo, repo_type="dataset",
+                            commit_message="The front page")
+    except Exception as error:
+        say(f"  (couldn't update the dataset card: {type(error).__name__})")
+    finally:
+        if handle is not None:
+            os.close(handle)
+            if path:
+                os.unlink(path)
 
 
 def describe() -> dict:
